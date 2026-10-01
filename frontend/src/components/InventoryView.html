@@ -1,0 +1,388 @@
+<!-- 
+  ==============================================================================
+  INVENTORY VIEW COMPONENT (HTML + CSS + JS)
+  ==============================================================================
+  Self-contained HTML component: includes markup, <style>, and <script>.
+-->
+
+<div id="inventory-view-component" class="inventory-page">
+  <!-- Header -->
+  <div class="inv-header-row">
+    <div>
+      <h1 class="inv-title">Inventory Management</h1>
+      <p class="inv-subtitle">Monitor ingredient stock levels, refill supplies, and configure prices</p>
+    </div>
+    <div class="inv-btn-group">
+      <button class="btn btn-primary" onclick="openAddProductModal()">➕ Add Product</button>
+      <button class="btn btn-secondary" onclick="loadInventoryData()">🔄 Refresh</button>
+    </div>
+  </div>
+
+  <!-- Summary KPI Cards -->
+  <div class="inv-stats-grid">
+    <div class="inv-stat-card">
+      <div class="inv-stat-icon bg-blue">📦</div>
+      <div>
+        <div class="inv-stat-label">TOTAL PRODUCTS</div>
+        <div class="inv-stat-value" id="inv-total-count">0</div>
+        <div class="inv-stat-sub text-blue">Menu catalog items</div>
+      </div>
+    </div>
+
+    <div class="inv-stat-card">
+      <div class="inv-stat-icon bg-green">✨</div>
+      <div>
+        <div class="inv-stat-label">ACTIVE FOR SALE</div>
+        <div class="inv-stat-value text-green" id="inv-active-count">0</div>
+        <div class="inv-stat-sub text-green">Visible to customers</div>
+      </div>
+    </div>
+
+    <div class="inv-stat-card">
+      <div class="inv-stat-icon bg-red">🚫</div>
+      <div>
+        <div class="inv-stat-label">DISABLED / HIDDEN</div>
+        <div class="inv-stat-value text-red" id="inv-disabled-count">0</div>
+        <div class="inv-stat-sub text-red">Blocked from ordering</div>
+      </div>
+    </div>
+
+    <div class="inv-stat-card">
+      <div class="inv-stat-icon bg-yellow">⚠️</div>
+      <div>
+        <div class="inv-stat-label">LOW STOCK ITEMS</div>
+        <div class="inv-stat-value" id="inv-low-count">0</div>
+        <div class="inv-stat-sub text-yellow">Needs replenishment</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Product Table Card -->
+  <div class="inv-table-card">
+    <div class="table-scroller">
+      <table class="inv-table">
+        <thead>
+          <tr>
+            <th>Item Name</th>
+            <th>Category</th>
+            <th>Price</th>
+            <th>Stock Level</th>
+            <th>Customer Status</th>
+            <th style="text-align: center;">Enable / Disable</th>
+            <th style="text-align: center;">Quick Refill</th>
+          </tr>
+        </thead>
+        <tbody id="inv-table-body">
+          <tr>
+            <td colspan="7" style="text-align: center; padding: 32px; color: #94a3b8;">
+              Loading inventory catalog...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+  .inventory-page {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #f1f5f9;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .inv-header-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .inv-title { font-size: 24px; font-weight: 800; color: #fff; margin: 0; }
+  .inv-subtitle { font-size: 14px; color: #94a3b8; margin-top: 2px; }
+  .inv-btn-group { display: flex; align-items: center; gap: 10px; }
+
+  .inv-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .inv-stat-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 16px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 10px 20px -5px rgba(0,0,0,0.3);
+  }
+  .inv-stat-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  .inv-stat-label { font-size: 11px; font-weight: 700; color: #94a3b8; }
+  .inv-stat-value { font-size: 28px; font-weight: 800; color: #ffffff; line-height: 1.2; margin-top: 2px; }
+  .inv-stat-sub   { font-size: 11px; margin-top: 2px; color: #94a3b8; }
+
+  .inv-table-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 10px 20px -5px rgba(0,0,0,0.3);
+    overflow: hidden;
+  }
+  .table-scroller { overflow-x: auto; }
+  .inv-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 14px;
+  }
+  .inv-table th {
+    padding: 12px 16px;
+    border-bottom: 1px solid #334155;
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .inv-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid #334155;
+  }
+  .inv-item-name { font-weight: 700; color: #ffffff; }
+  .inv-item-price { font-weight: 800; color: #34d399; }
+  .stock-bar-wrap { min-width: 160px; }
+  .stock-bar-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .stock-track {
+    height: 6px;
+    background: #0f172a;
+    border-radius: 9999px;
+    overflow: hidden;
+  }
+  .stock-fill {
+    height: 100%;
+    border-radius: 9999px;
+    transition: width 0.4s ease;
+  }
+  .fill-green  { background: #10b981; }
+  .fill-yellow { background: #facc15; }
+  .fill-red    { background: #ef4444; }
+
+  .refill-btn-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .refill-btn {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #f1f5f9;
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .refill-btn:hover { background: #334155; }
+  .refill-btn.plus-50 {
+    background: #f97316;
+    border-color: #f97316;
+    color: #fff;
+  }
+  .refill-btn.plus-50:hover { background: #ea580c; }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .status-badge.green { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+  .status-badge.red   { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+  .status-badge.yellow{ background: rgba(234,179,8,0.15); color: #facc15; border: 1px solid rgba(234,179,8,0.3); }
+
+  .toggle-status-btn {
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 8px;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+  .toggle-status-btn.disable-btn {
+    background: rgba(239,68,68,0.2);
+    color: #f87171;
+    border: 1px solid rgba(239,68,68,0.4);
+  }
+  .toggle-status-btn.disable-btn:hover {
+    background: #ef4444;
+    color: #fff;
+  }
+  .toggle-status-btn.enable-btn {
+    background: rgba(16,185,129,0.2);
+    color: #34d399;
+    border: 1px solid rgba(16,185,129,0.4);
+  }
+  .toggle-status-btn.enable-btn:hover {
+    background: #10b981;
+    color: #fff;
+  }
+</style>
+
+<script>
+  let inventoryCatalog = [];
+
+  async function loadInventoryData() {
+    try {
+      const res = await fetch('/api/products?all=true').then(r => r.json());
+      inventoryCatalog = res.products || [];
+
+      const activeList = inventoryCatalog.filter(p => p.is_active !== false);
+      const disabledList = inventoryCatalog.filter(p => p.is_active === false);
+      const lowStock = activeList.filter(p => p.stock <= (p.min_stock || 15)).length;
+
+      document.getElementById('inv-total-count').textContent = inventoryCatalog.length;
+      if (document.getElementById('inv-active-count')) document.getElementById('inv-active-count').textContent = activeList.length;
+      if (document.getElementById('inv-disabled-count')) document.getElementById('inv-disabled-count').textContent = disabledList.length;
+      document.getElementById('inv-low-count').textContent = lowStock;
+
+      renderInventoryTable();
+    } catch (e) {
+      console.warn('Inventory fetch failed:', e);
+    }
+  }
+
+  function renderInventoryTable() {
+    const tbody = document.getElementById('inv-table-body');
+    if (!tbody) return;
+
+    if (inventoryCatalog.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" style="text-align: center; padding: 32px; color: #94a3b8;">
+            No products found in database.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = inventoryCatalog.map(p => {
+      const isActive = p.is_active !== false;
+      const min = p.min_stock || 15;
+      const max = p.max_stock || 100;
+      const pct = Math.min(100, Math.round((p.stock / max) * 100));
+      const isOut = p.stock <= 0;
+      const isLow = p.stock <= min;
+
+      const fillClass = isOut ? 'fill-red' : isLow ? 'fill-yellow' : 'fill-green';
+      const stockBadge = isOut ? '<span class="status-badge red">Out of Stock</span>' : isLow ? '<span class="status-badge yellow">Low Stock</span>' : '<span class="status-badge green">In Stock</span>';
+      const activeBadge = isActive ? '<span class="status-badge green">● Active</span>' : '<span class="status-badge red">🚫 Disabled</span>';
+
+      return `
+        <tr style="${!isActive ? 'opacity: 0.75; background: rgba(239,68,68,0.04);' : ''}">
+          <td>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              ${p.image_url ? `<img src="${p.image_url}" alt="${p.name}" style="width: 36px; height: 36px; object-fit: cover; border-radius: 8px; ${!isActive ? 'filter: grayscale(80%); opacity: 0.65;' : ''}" onerror="this.style.display='none'">` : ''}
+              <div>
+                <span class="inv-item-name" style="${!isActive ? 'text-decoration: line-through; color: #94a3b8;' : ''}">${p.name}</span>
+                ${!isActive ? '<div style="font-size: 11px; color: #f87171; font-weight: 600;">🚫 Hidden from store</div>' : ''}
+              </div>
+            </div>
+          </td>
+          <td style="color: #94a3b8;">${p.category || 'Siomai'}</td>
+          <td><span class="inv-item-price">₱${Number(p.price).toFixed(2)}</span></td>
+          <td>
+            <div class="stock-bar-wrap">
+              <div class="stock-bar-meta">
+                <span style="color: ${isOut ? '#f87171' : isLow ? '#facc15' : '#34d399'};">${p.stock} / ${max} ${p.unit || 'pcs'}</span>
+                <span style="color: #94a3b8;">${pct}%</span>
+              </div>
+              <div class="stock-track">
+                <div class="stock-fill ${fillClass}" style="width: ${pct}%;"></div>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              ${activeBadge}
+              ${isActive ? stockBadge : ''}
+            </div>
+          </td>
+          <td style="text-align: center;">
+            <button class="toggle-status-btn ${isActive ? 'disable-btn' : 'enable-btn'}" onclick="toggleProductActive('${p.id}', '${p.name}', ${isActive})">
+              ${isActive ? '🚫 Disable' : '✅ Enable'}
+            </button>
+          </td>
+          <td>
+            <div class="refill-btn-row">
+              <button class="refill-btn" onclick="adjustProductStock('${p.id}', -1)">-1</button>
+              <button class="refill-btn" onclick="adjustProductStock('${p.id}', 10)">+10</button>
+              <button class="refill-btn plus-50" onclick="adjustProductStock('${p.id}', 50)">+50</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  async function toggleProductActive(productId, name, currentActive) {
+    const makeActive = !currentActive;
+    try {
+      await fetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: makeActive })
+      });
+      if (window.showToast) {
+        window.showToast(
+          makeActive ? 'success' : 'warning',
+          makeActive ? 'Product Enabled' : 'Product Disabled',
+          `${name} is now ${makeActive ? 'available for customers' : 'disabled and hidden from customers'}.`
+        );
+      }
+      loadInventoryData();
+    } catch (e) {
+      if (window.showToast) window.showToast('error', 'Update Failed', e.message);
+    }
+  }
+
+  async function adjustProductStock(productId, delta) {
+    try {
+      await fetch(`/api/inventory/${productId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adjustment: delta })
+      });
+      if (window.showToast) window.showToast('success', 'Stock Adjusted', `Refill updated by ${delta > 0 ? '+' : ''}${delta}`);
+      loadInventoryData();
+    } catch (e) {
+      if (window.showToast) window.showToast('error', 'Error', e.message);
+    }
+  }
+
+  window.loadInventoryData = loadInventoryData;
+  window.toggleProductActive = toggleProductActive;
+</script>
