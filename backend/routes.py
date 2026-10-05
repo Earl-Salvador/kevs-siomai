@@ -175,6 +175,43 @@ def _record_sale(order):
         db.session.rollback()
 
 
+def _validate_delivery_coverage(order_type, delivery_address):
+    """
+    Ensure delivery orders are strictly restricted to Barangay Gatid, Santa Cruz, Laguna.
+    Outside Gatid or outside Santa Cruz Laguna, delivery is not accepted (customer must use Store Pickup).
+    """
+    if str(order_type).lower() != 'delivery':
+        return True, None
+    if not delivery_address or not str(delivery_address).strip():
+        return False, "Kailangan ng delivery address para sa delivery order."
+
+    addr_lower = str(delivery_address).lower()
+    # Accept Gatid or Batisan (sitio where Boss KEVS is located in Brgy. Gatid, Santa Cruz, Laguna)
+    is_in_gatid = ('gatid' in addr_lower) or ('batisan' in addr_lower)
+    if not is_in_gatid:
+        return False, "Ang delivery ay para lamang sa Barangay Gatid, Santa Cruz, Laguna. Kapag wala sa Gatid, mangyaring piliin ang Store Pickup."
+
+    return True, None
+
+
+# ─────────────────────────────────────────────
+# DELIVERY COVERAGE INFO
+# ─────────────────────────────────────────────
+@api.route('/delivery/coverage', methods=['GET'])
+def get_delivery_coverage():
+    """Return official store delivery coverage limits."""
+    return jsonify({
+        'status': 'active',
+        'coverage_area': 'Barangay Gatid, Santa Cruz, Laguna',
+        'hub_address': '070 Batisan, Brgy. Gatid, Santa Cruz, Laguna',
+        'allowed_barangay': 'Gatid',
+        'municipality': 'Santa Cruz',
+        'province': 'Laguna',
+        'delivery_fee': 30.0,
+        'message': 'Ang delivery ay para lamang sa Barangay Gatid, Santa Cruz, Laguna. Kapag wala sa Gatid, piliin ang Store Pickup.'
+    }), 200
+
+
 # ─────────────────────────────────────────────
 # AUTH
 # ─────────────────────────────────────────────
@@ -232,6 +269,12 @@ def queue_add():
 
     order_type = data.get('order_type', 'pickup')
     order_source = data.get('type', 'walk-in')
+    delivery_address = data.get('delivery_address', '').strip()
+
+    # Validate delivery coverage (Barangay Gatid, Santa Cruz, Laguna only)
+    is_valid_delivery, delivery_error = _validate_delivery_coverage(order_type, delivery_address)
+    if not is_valid_delivery:
+        return jsonify({'error': delivery_error}), 400
 
     # Build order items
     items_data = data.get('items', [])
@@ -496,7 +539,15 @@ def get_orders():
 def create_order():
     """Mobile app places order."""
     from app import socketio
-    data = request.get_json()
+    data = request.get_json() or {}
+    order_type = data.get('order_type', 'pickup')
+    delivery_address = data.get('delivery_address', '').strip()
+
+    # Validate delivery coverage (Barangay Gatid, Santa Cruz, Laguna only)
+    is_valid_delivery, delivery_error = _validate_delivery_coverage(order_type, delivery_address)
+    if not is_valid_delivery:
+        return jsonify({'error': delivery_error}), 400
+
     queue = _get_or_init_queue()
     queue.current_queue_no += 1
     queue.last_updated = datetime.now(timezone.utc)
@@ -517,13 +568,17 @@ def create_order():
                 subtotal=subtotal
             ))
 
+    # Add standard delivery fee for Gatid deliveries (₱30.00)
+    if order_type == 'delivery':
+        total_amount += 30.0
+
     new_order = Order(
         queue_no=queue.current_queue_no,
         type='online',
-        order_type=data.get('order_type', 'pickup'),
+        order_type=order_type,
         customer_name=data.get('customer_name', 'Online Customer'),
         customer_phone=data.get('customer_phone', ''),
-        delivery_address=data.get('delivery_address', ''),
+        delivery_address=delivery_address if order_type == 'delivery' else '',
         status='pending',
         payment_status='pending',
         payment_method=data.get('payment_method', 'GCash'),

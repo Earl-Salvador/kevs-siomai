@@ -96,7 +96,12 @@ class ApiService {
         await OfflineService.saveActiveOrder(order);
         return ApiResult.success(order);
       } else {
-        return ApiResult.failure('Failed to submit order: ${response.body}');
+        try {
+          final Map<String, dynamic> data = jsonDecode(response.body);
+          return ApiResult.failure(data['error'] ?? 'Failed to submit order');
+        } catch (_) {
+          return ApiResult.failure('Failed to submit order: ${response.body}');
+        }
       }
     } catch (e) {
       // Network failure: Save order locally in Offline Pending Queue

@@ -253,6 +253,12 @@ export const Icons = {
     <line x1="4.93" x2="19.07" y1="4.93" y2="19.07"/>
   `, opts),
 
+  // Map Pin / Location
+  pin: (opts) => svg(`
+    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+    <circle cx="12" cy="10" r="3"/>
+  `, opts),
+
   // Spinner
   spinner: (opts) => svg(`
     <path d="M21 12a9 9 0 1 1-6.219-8.56"/>

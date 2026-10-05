@@ -22,6 +22,84 @@ class _CartScreenState extends State<CartScreen> {
   String _paymentMethod = 'GCash'; // 'GCash' or 'Cash'
   bool _isSubmitting = false;
 
+  String _selectedGatidSitio = 'Batisan (Near Boss KEVS)';
+  final List<String> _gatidSitios = [
+    'Batisan (Near Boss KEVS)',
+    'National Highway, Gatid',
+    'Sitio Ilaya, Gatid',
+    'Sitio Ibaba, Gatid',
+    'Sitio Maligaya, Gatid',
+    'Gatid Elementary School Vicinity',
+    'Other Area in Brgy. Gatid',
+  ];
+
+  String _buildFullDeliveryAddress() {
+    final street = _addressController.text.trim();
+    if (street.isEmpty) return '';
+    return '$street, $_selectedGatidSitio, Brgy. Gatid, Santa Cruz, Laguna';
+  }
+
+  bool _isAddressInGatid(String addr) {
+    if (_orderType != 'delivery') return true;
+    final lower = addr.toLowerCase();
+    return lower.contains('gatid') || lower.contains('batisan');
+  }
+
+  void _showOutsideDeliveryDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.location_off_rounded, color: Color(0xFFC62828)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Outside Delivery Area',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text(
+              'Paumanhin, ang Boss KEVS delivery ay para lamang sa Barangay Gatid, Santa Cruz, Laguna.',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Kapag wala sa Gatid ang iyong address, hindi po makakapag-deliver ang aming rider. Mangyaring lumipat sa "Store Pickup" upang maihanda ang iyong order sa tindahan (070 Batisan, Santa Cruz, Laguna).',
+              style: TextStyle(fontSize: 12.5, color: Colors.black87, height: 1.3),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('I-edit ang Address'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFC62828),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            icon: const Icon(Icons.storefront_rounded, size: 16),
+            label: const Text('Lumipat sa Store Pickup'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() => _orderType = 'pickup');
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -55,13 +133,20 @@ class _CartScreenState extends State<CartScreen> {
     if (shop.cart.isEmpty) return;
     if (!_formKey.currentState!.validate()) return;
 
+    final fullDeliveryAddress = _orderType == 'delivery' ? _buildFullDeliveryAddress() : '';
+
+    if (_orderType == 'delivery' && !_isAddressInGatid(fullDeliveryAddress)) {
+      _showOutsideDeliveryDialog();
+      return;
+    }
+
     setState(() => _isSubmitting = true);
 
     final order = await shop.submitOrder(
       customerName: _nameController.text.trim(),
       customerPhone: _phoneController.text.trim(),
       orderType: _orderType,
-      deliveryAddress: _addressController.text.trim(),
+      deliveryAddress: fullDeliveryAddress,
       paymentMethod: _paymentMethod,
       notes: _notesController.text.trim(),
     );
@@ -87,10 +172,10 @@ class _CartScreenState extends State<CartScreen> {
           barrierDismissible: false,
           builder: (ctx) => AlertDialog(
             title: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.green),
-                const SizedBox(width: 8),
-                const Text('Order Placed!'),
+              children: const [
+                Icon(Icons.check_circle, color: Colors.green),
+                SizedBox(width: 8),
+                Text('Order Placed!'),
               ],
             ),
             content: Column(
@@ -103,6 +188,14 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text('Order Type: ${order.orderType.toUpperCase()}'),
+                if (order.orderType == 'delivery' && order.deliveryAddress.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      'Delivery to: ${order.deliveryAddress}',
+                      style: const TextStyle(fontSize: 12, color: Colors.black87),
+                    ),
+                  ),
                 Text('Payment: ${order.paymentMethod} (${order.paymentStatus})'),
                 Text('Total: ₱${order.totalAmount.toStringAsFixed(2)}'),
                 const SizedBox(height: 12),
@@ -124,6 +217,41 @@ class _CartScreenState extends State<CartScreen> {
           ),
         );
       }
+    } else if (shop.errorMessage != null && shop.errorMessage!.isNotEmpty) {
+      // Backend returned specific validation error (e.g. delivery restriction)
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: const [
+              Icon(Icons.warning_amber_rounded, color: Color(0xFFC62828)),
+              SizedBox(width: 8),
+              Text('Paunawa sa Delivery'),
+            ],
+          ),
+          content: Text(shop.errorMessage!),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+            if (_orderType == 'delivery')
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFC62828),
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.storefront_rounded, size: 16),
+                label: const Text('Lumipat sa Store Pickup'),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  setState(() => _orderType = 'pickup');
+                },
+              ),
+          ],
+        ),
+      );
     } else {
       // Check if saved offline
       showDialog(
@@ -297,6 +425,30 @@ class _CartScreenState extends State<CartScreen> {
                               ),
                             ],
                           ),
+                          if (_orderType == 'delivery') ...[
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF2F2),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFFFECACA)),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: const [
+                                  Icon(Icons.location_on, size: 18, color: Color(0xFFDC2626)),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Delivery Area: Eksklusibo lamang sa Barangay Gatid, Santa Cruz, Laguna ang aming delivery. Kapag nasa labas ng Gatid, mangyaring piliin ang Store Pickup.',
+                                      style: TextStyle(fontSize: 11.5, color: Color(0xFF991B1B), height: 1.3),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -334,20 +486,73 @@ class _CartScreenState extends State<CartScreen> {
                             validator: (val) => val == null || val.trim().isEmpty ? 'Please enter contact number' : null,
                           ),
                           if (_orderType == 'delivery') ...[
+                            const SizedBox(height: 12),
+                            // Zone / Sitio Selector in Gatid
+                            DropdownButtonFormField<String>(
+                              initialValue: _selectedGatidSitio,
+                              decoration: const InputDecoration(
+                                labelText: 'Sitio / Zone sa Brgy. Gatid *',
+                                prefixIcon: Icon(Icons.map_outlined),
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                              items: _gatidSitios.map((sitio) {
+                                return DropdownMenuItem(
+                                  value: sitio,
+                                  child: Text(sitio, style: const TextStyle(fontSize: 13.5)),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setState(() => _selectedGatidSitio = val);
+                                }
+                              },
+                            ),
                             const SizedBox(height: 10),
                             TextFormField(
                               controller: _addressController,
                               maxLines: 2,
                               decoration: const InputDecoration(
-                                labelText: 'Delivery Address *',
-                                prefixIcon: Icon(Icons.location_on_outlined),
+                                labelText: 'House No., Street & Landmark (sa Gatid) *',
+                                prefixIcon: Icon(Icons.home_outlined),
                                 border: OutlineInputBorder(),
-                                hintText: 'House No, Street, Brgy, Town/City',
+                                hintText: 'Hal. House #070, Batisan, malapit sa Chapel',
                               ),
-                              validator: (val) =>
-                                  _orderType == 'delivery' && (val == null || val.trim().isEmpty)
-                                      ? 'Address required for delivery'
-                                      : null,
+                              validator: (val) {
+                                if (_orderType != 'delivery') return null;
+                                if (val == null || val.trim().isEmpty) {
+                                  return 'Address required for delivery';
+                                }
+                                final lower = val.toLowerCase();
+                                final outsideKeywords = [
+                                  'pagsanjan', 'pila', 'victoria', 'calamba', 'los banos', 'san pablo',
+                                  'bubukal', 'bagumbayan', 'pagsawitan', 'calios', 'santisima cruz',
+                                  'san jose', 'alipit', 'palasan', 'duhat', 'labuin', 'patimbao', 'manila'
+                                ];
+                                for (final out in outsideKeywords) {
+                                  if (lower.contains(out) && !lower.contains('gatid')) {
+                                    return 'Hindi sakop ang $out. Available lamang sa loob ng Brgy. Gatid!';
+                                  }
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                const Icon(Icons.check_circle_rounded, size: 14, color: Colors.green),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    'Delivery to: Brgy. Gatid, Santa Cruz, Laguna (+₱30.00)',
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                           const SizedBox(height: 10),

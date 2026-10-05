@@ -1085,7 +1085,7 @@ function renderOrderCards(orders) {
           <div class="flex items-center gap-2">
             <span style="font-size: 16px; font-weight: 800; color: var(--brand-400);">#${queueNo}</span>
             <span class="badge ${getStatusBadgeClass(order.status)}">${order.status}</span>
-            <span class="badge badge-gray">${order.order_type || order.type || 'Walk-in'}</span>
+            <span class="badge ${order.order_type === 'delivery' ? 'badge-amber' : 'badge-gray'}">${order.order_type === 'delivery' ? 'Delivery (Gatid)' : (order.order_type || order.type || 'Walk-in')}</span>
           </div>
           <span class="text-xs text-dark-400">${new Date(order.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
         </div>
@@ -1093,6 +1093,12 @@ function renderOrderCards(orders) {
         <div class="mb-3">
           <div class="font-bold text-white text-base">${escapeHtml(order.customer_name || 'Walk-in Customer')}</div>
           <div class="text-xs text-dark-300 mt-1">${formatOrderItems(order.items)}</div>
+          ${order.delivery_address ? `
+            <div class="text-xs text-amber-300 mt-2 p-2 rounded bg-amber-950/30 border border-amber-800/40 flex items-start gap-1.5">
+              <span class="mt-0.5 text-amber-400">${Icons.pin({ size: 13 })}</span>
+              <span><strong>Delivery Address:</strong> ${escapeHtml(order.delivery_address)}</span>
+            </div>
+          ` : ''}
         </div>
 
         <div class="flex items-center justify-between pt-3 border-t">
