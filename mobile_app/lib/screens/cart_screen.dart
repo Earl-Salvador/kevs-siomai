@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/shop_provider.dart';
 import '../services/offline_service.dart';
+import '../widgets/gcash_qr_dialog.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
@@ -70,66 +71,59 @@ class _CartScreenState extends State<CartScreen> {
     if (!mounted) return;
 
     if (order != null) {
-      // Order placed successfully on backend
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: Row(
-            children: [
-              const Icon(Icons.check_circle, color: Colors.green),
-              const SizedBox(width: 8),
-              const Text('Order Placed!'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Your Queue Ticket: #${order.queueNo}',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFFC62828)),
-              ),
-              const SizedBox(height: 8),
-              Text('Order Type: ${order.orderType.toUpperCase()}'),
-              Text('Payment: ${order.paymentMethod} (${order.paymentStatus})'),
-              Text('Total: ₱${order.totalAmount.toStringAsFixed(2)}'),
-              const SizedBox(height: 12),
-              const Text(
-                'Your order has been sent to Boss KEVS and added to the live unified queue.',
-                style: TextStyle(fontSize: 13, color: Colors.black87),
-              ),
-            ],
-          ),
-          actions: [
-            if (order.paymentMethod == 'GCash' && order.paymentStatus == 'pending')
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF007DFE), foregroundColor: Colors.white),
-                icon: const Icon(Icons.payment),
-                label: const Text('Pay with GCash'),
-                onPressed: () async {
+      if (order.paymentMethod == 'GCash') {
+        // Automatically display GCash QR code for payment
+        await GCashQRDialog.show(
+          context,
+          order: order,
+          totalAmount: order.totalAmount,
+        );
+        if (!mounted) return;
+        Navigator.pop(context); // Back to catalog
+      } else {
+        // Order placed successfully on backend (Cash)
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green),
+                const SizedBox(width: 8),
+                const Text('Order Placed!'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Your Queue Ticket: #${order.queueNo}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFFC62828)),
+                ),
+                const SizedBox(height: 8),
+                Text('Order Type: ${order.orderType.toUpperCase()}'),
+                Text('Payment: ${order.paymentMethod} (${order.paymentStatus})'),
+                Text('Total: ₱${order.totalAmount.toStringAsFixed(2)}'),
+                const SizedBox(height: 12),
+                const Text(
+                  'Your order has been sent to Boss KEVS and added to the live unified queue.',
+                  style: TextStyle(fontSize: 13, color: Colors.black87),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
                   Navigator.pop(ctx);
-                  final success = await shop.processGCashPayment(order);
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(success ? 'GCash payment confirmed!' : 'Payment simulation complete'),
-                      backgroundColor: success ? Colors.green : Colors.grey.shade800,
-                    ),
-                  );
                   Navigator.pop(context); // Back to catalog
                 },
+                child: const Text('View Status in Queue'),
               ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                Navigator.pop(context); // Back to catalog
-              },
-              child: const Text('View Status in Queue'),
-            ),
-          ],
-        ),
-      );
+            ],
+          ),
+        );
+      }
     } else {
       // Check if saved offline
       showDialog(
@@ -194,11 +188,14 @@ class _CartScreenState extends State<CartScreen> {
                 ],
               ),
             )
-          : Form(
-              key: _formKey,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
+          : Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: Form(
+                  key: _formKey,
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
                   // ── Items List Card ──
                   Card(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -423,6 +420,77 @@ class _CartScreenState extends State<CartScreen> {
                               ),
                             ),
                           ),
+                          if (_paymentMethod == 'GCash')
+                            Container(
+                              margin: const EdgeInsets.only(top: 8, bottom: 4),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF007DFE).withValues(alpha: 0.05),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFF007DFE).withValues(alpha: 0.25)),
+                              ),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.qr_code_2, color: Color(0xFF007DFE), size: 20),
+                                      const SizedBox(width: 8),
+                                      const Expanded(
+                                        child: Text(
+                                          'Scan GCash QR Code',
+                                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0056B3)),
+                                        ),
+                                      ),
+                                      InkWell(
+                                        onTap: () => GCashQRDialog.show(
+                                          context,
+                                          totalAmount: shop.cartTotal,
+                                        ),
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          child: Text(
+                                            'Tap to Zoom',
+                                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF007DFE)),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  InkWell(
+                                    onTap: () => GCashQRDialog.show(
+                                      context,
+                                      totalAmount: shop.cartTotal,
+                                    ),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: Colors.grey.shade300),
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Image.asset(
+                                          'assets/images/gcash_qr.png',
+                                          height: 190,
+                                          width: double.infinity,
+                                          fit: BoxFit.contain,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text('Account: ', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                      Text('JO*N LL**D C. (0921 296 ••••)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
                           const SizedBox(height: 10),
                           InkWell(
                             onTap: () => setState(() => _paymentMethod = 'Cash'),
@@ -550,6 +618,8 @@ class _CartScreenState extends State<CartScreen> {
                 ],
               ),
             ),
+          ),
+        ),
     );
   }
 }

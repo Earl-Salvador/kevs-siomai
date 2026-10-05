@@ -40,11 +40,11 @@ class _ReviewDialogState extends State<ReviewDialog> {
 
   final List<String> _ratingLabels = [
     'Tap a star to rate',
-    'Terrible 😞',
-    'Fair / Could be better 😐',
-    'Good / Average 🙂',
-    'Very Good! 😊',
-    'Outstanding Siomai! 🥟🔥',
+    'Poor (1 Star)',
+    'Fair (2 Stars)',
+    'Good (3 Stars)',
+    'Very Good (4 Stars)',
+    'Outstanding (5 Stars)',
   ];
 
   @override
@@ -153,7 +153,7 @@ class _ReviewDialogState extends State<ReviewDialog> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Center(
-                    child: Text('🥟', style: TextStyle(fontSize: 22)),
+                    child: Icon(Icons.star_rounded, size: 26, color: Colors.white),
                   ),
                 ),
                 const SizedBox(width: 14),

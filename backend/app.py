@@ -2,7 +2,7 @@ import os
 import sys
 import threading
 import time
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, request, Response
 from flask_cors import CORS
 from flask_socketio import SocketIO
 from models import db
@@ -57,9 +57,40 @@ def create_app():
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
     # ── Extensions ────────────────────────────────────────────────────────────
-    CORS(app, resources={r'/api/*': {'origins': '*'}}, supports_credentials=True)
+    CORS(app, resources={r'/*': {'origins': '*'}})
     db.init_app(app)
     socketio.init_app(app, cors_allowed_origins='*', async_mode='threading')
+
+    # ── Explicit CORS Handler for Mobile & Remote Devices ─────────────────────
+    @app.before_request
+    def handle_preflight():
+        if request.method == 'OPTIONS':
+            from flask import Response
+            resp = Response()
+            origin = request.headers.get('Origin', '*')
+            resp.headers['Access-Control-Allow-Origin'] = origin if origin else '*'
+            resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+            resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept'
+            resp.headers['Access-Control-Allow-Credentials'] = 'true'
+            return resp
+
+    @app.after_request
+    def add_cors_headers(response):
+        origin = request.headers.get('Origin', '*')
+        response.headers['Access-Control-Allow-Origin'] = origin if origin else '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+
+        # Live Terminal Activity Logging
+        p = request.path
+        if not p.startswith('/socket.io'):
+            is_poll = request.method == 'GET' and (p.endswith('/queue') or p.endswith('/stats') or p == '/favicon.ico')
+            if not is_poll:
+                status_icon = "🟢" if response.status_code < 400 else "🔴"
+                print(f"  {status_icon} [{request.method}] {p} -> {response.status_code}", flush=True)
+
+        return response
 
     # ── Security / WAF ────────────────────────────────────────────────────────
     from firewall import waf, firewall_api
@@ -74,20 +105,41 @@ def create_app():
     @app.route('/images/<path:filename>')
     def serve_product_images(filename):
         img_dir = os.path.join(os.path.dirname(__file__), 'static', 'images')
-        return send_from_directory(img_dir, filename)
+        resp = send_from_directory(img_dir, filename)
+        resp.headers['Cache-Control'] = 'no-cache, must-revalidate, max-age=0'
+        return resp
 
-    # ── SPA Static File Server ────────────────────────────────────────────────
+    # ── Mobile App Static File Server (/mobile) ───────────────────────────────
+    mobile_build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mobile_app', 'build', 'web'))
+
+    @app.route('/mobile', defaults={'path': ''})
+    @app.route('/mobile/<path:path>')
+    def serve_mobile_app(path):
+        if os.path.isdir(mobile_build_dir):
+            if path:
+                fp = os.path.join(mobile_build_dir, path)
+                if os.path.isfile(fp):
+                    return send_from_directory(mobile_build_dir, path)
+            index = os.path.join(mobile_build_dir, 'index.html')
+            if os.path.isfile(index):
+                return send_from_directory(mobile_build_dir, 'index.html')
+        return '<h2>Mobile build not found. Please build the mobile web app first.</h2>', 404
+
+    # ── SPA Static File Server (Admin / Cashier Dashboard) ────────────────────
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve_frontend(path):
-        if path.startswith('api/') or path == 'api':
-            return {'error': 'API route not found'}, 404
+        if path.startswith('api/') or path == 'api' or path.startswith('mobile/') or path == 'mobile':
+            return {'error': 'Route not found'}, 404
         sf = app.static_folder
         if sf and os.path.isdir(sf):
             if path:
                 fp = os.path.join(sf, path)
                 if os.path.isfile(fp):
                     return send_from_directory(sf, path)
+                public_fp = os.path.join(sf, 'public', path)
+                if os.path.isfile(public_fp):
+                    return send_from_directory(os.path.join(sf, 'public'), path)
             index = os.path.join(sf, 'index.html')
             if os.path.isfile(index):
                 return send_from_directory(sf, 'index.html')

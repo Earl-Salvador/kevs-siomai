@@ -21,19 +21,35 @@ class ShopProvider extends ChangeNotifier {
 
   Timer? _queuePollTimer;
 
+  static int _categoryPriority(String category) {
+    final cat = category.toLowerCase().trim();
+    if (cat.contains('siomai')) return 1;
+    if (cat.contains('drink') || cat.contains('beverage')) return 2;
+    if (cat.contains('add') || cat.contains('sauce') || cat.contains('condiment')) return 3;
+    return 4;
+  }
+
   // Getters
   List<Product> get products {
     final activeList = _products.where((p) => p.isActive).toList();
+    activeList.sort((a, b) {
+      final orderA = _categoryPriority(a.category);
+      final orderB = _categoryPriority(b.category);
+      if (orderA != orderB) return orderA.compareTo(orderB);
+      return a.id.compareTo(b.id);
+    });
     if (_selectedCategory == 'All') return activeList;
     return activeList.where((p) => p.category.toLowerCase() == _selectedCategory.toLowerCase()).toList();
   }
 
   List<String> get categories {
-    final Set<String> cats = {'All'};
+    final Set<String> rawCats = {};
     for (var p in _products.where((p) => p.isActive)) {
-      if (p.category.isNotEmpty) cats.add(p.category);
+      if (p.category.isNotEmpty) rawCats.add(p.category);
     }
-    return cats.toList();
+    final sorted = rawCats.toList()
+      ..sort((a, b) => _categoryPriority(a).compareTo(_categoryPriority(b)));
+    return ['All', ...sorted];
   }
 
   String get selectedCategory => _selectedCategory;
@@ -69,9 +85,9 @@ class ShopProvider extends ChangeNotifier {
     await refreshQueue();
     await loadReviews();
 
-    // Start background queue polling every 10 seconds
+    // Start background queue polling every 2 seconds for real-time synchronization
     _queuePollTimer?.cancel();
-    _queuePollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    _queuePollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       refreshQueue(silent: true);
       refreshActiveOrders(silent: true);
     });
@@ -215,8 +231,13 @@ class ShopProvider extends ChangeNotifier {
   Future<void> refreshQueue({bool silent = false}) async {
     final res = await ApiService.fetchQueueStatus();
     if (res.isSuccess && res.data != null) {
-      _queueStatus = res.data;
-      if (!silent) notifyListeners();
+      final newStatus = res.data!;
+      final bool changed = _queueStatus == null ||
+          _queueStatus!.nowServing != newStatus.nowServing ||
+          _queueStatus!.currentQueueNo != newStatus.currentQueueNo ||
+          _queueStatus!.activeOrders != newStatus.activeOrders;
+      _queueStatus = newStatus;
+      if (changed || !silent) notifyListeners();
     }
   }
 
@@ -241,7 +262,7 @@ class ShopProvider extends ChangeNotifier {
       }
     }
 
-    if (changed && !silent) {
+    if (changed) {
       notifyListeners();
     }
   }

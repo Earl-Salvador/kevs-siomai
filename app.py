@@ -56,17 +56,18 @@ def open_browser_once(url, delay=1.8):
 
 def main():
     print_banner()
-    url = 'http://127.0.0.1:5000'
+    url = 'http://192.168.123.39:5000/'
     print(f'  ➜ {url}/\n')
 
     # Prevent backend from opening a second browser window
     env = os.environ.copy()
     env['KEVS_LAUNCHED'] = '1'
+    env['PYTHONUNBUFFERED'] = '1'
 
     # Open single browser window
     open_browser_once(url)
 
-    cmd = [PYTHON_EXE, 'app.py']
+    cmd = [PYTHON_EXE, '-u', 'app.py']
     try:
         subprocess.run(cmd, cwd=BACKEND_DIR, env=env)
     except KeyboardInterrupt:

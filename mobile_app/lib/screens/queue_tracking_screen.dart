@@ -4,6 +4,7 @@ import '../providers/shop_provider.dart';
 import '../models/order.dart';
 import '../widgets/order_status_badge.dart';
 import '../widgets/review_dialog.dart';
+import '../widgets/gcash_qr_dialog.dart';
 
 class QueueTrackingScreen extends StatelessWidget {
   const QueueTrackingScreen({super.key});
@@ -33,9 +34,12 @@ class QueueTrackingScreen extends StatelessWidget {
           await shop.refreshQueue();
           await shop.refreshActiveOrders();
         },
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
             // ── Live Unified Queue Header Card (ESP32 / OLED synchronized) ──
             Container(
               padding: const EdgeInsets.all(20),
@@ -105,14 +109,17 @@ class QueueTrackingScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    queue != null && queue.hasActive && queue.nowServing > 0
-                        ? '#${queue.nowServing}'
-                        : 'No orders yet!',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 42,
-                      fontWeight: FontWeight.w900,
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      queue != null && queue.hasActive && queue.nowServing > 0
+                          ? '#${queue.nowServing}'
+                          : 'No orders yet!',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 42,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -166,8 +173,10 @@ class QueueTrackingScreen extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
+    ),
+  ),
+);
+}
 
   Widget _buildOfflineCard(BuildContext context, ShopProvider shop, CustomerOrder order) {
     return Card(
@@ -356,13 +365,31 @@ class QueueTrackingScreen extends StatelessWidget {
                       'Payment: ${order.paymentMethod}',
                       style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                     ),
-                    Text(
-                      order.paymentStatus == 'confirmed' ? '✓ Paid' : '⏳ Pending Payment',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: order.paymentStatus == 'confirmed' ? Colors.green : Colors.amber.shade900,
-                      ),
+                    Row(
+                      children: [
+                        Icon(
+                          order.paymentStatus == 'confirmed'
+                              ? Icons.check_circle_rounded
+                              : Icons.access_time_rounded,
+                          size: 13,
+                          color: order.paymentStatus == 'confirmed'
+                              ? Colors.green
+                              : Colors.amber.shade900,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          order.paymentStatus == 'confirmed'
+                              ? 'Paid'
+                              : 'Pending Payment',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: order.paymentStatus == 'confirmed'
+                                ? Colors.green
+                                : Colors.amber.shade900,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -383,17 +410,14 @@ class QueueTrackingScreen extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             minimumSize: Size.zero,
                           ),
-                          icon: const Icon(Icons.payment, size: 14),
-                          label: const Text('Pay with GCash', style: TextStyle(fontSize: 11)),
+                          icon: const Icon(Icons.qr_code_2, size: 14),
+                          label: const Text('Pay with GCash QR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                           onPressed: () async {
-                            final success = await shop.processGCashPayment(order);
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(success ? 'Payment verified!' : 'Payment simulation complete'),
-                                ),
-                              );
-                            }
+                            await GCashQRDialog.show(
+                              context,
+                              order: order,
+                              totalAmount: order.totalAmount,
+                            );
                           },
                         ),
                       ),
@@ -412,8 +436,8 @@ class QueueTrackingScreen extends StatelessWidget {
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
-                    icon: const Icon(Icons.star, size: 16),
-                    label: const Text('⭐ Rate this Order (1 - 5 Stars)'),
+                    icon: const Icon(Icons.star_rounded, size: 17),
+                    label: const Text('Rate this Order (1 - 5 Stars)'),
                     onPressed: () => ReviewDialog.show(
                       context,
                       orderId: order.id,

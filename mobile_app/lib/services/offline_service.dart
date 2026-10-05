@@ -19,10 +19,13 @@ class OfflineService {
 
     // Smart default: If opened in a browser/phone, use current host IP
     final host = Uri.base.host;
-    if (host.isNotEmpty && host != '0.0.0.0') {
+    if (host.isNotEmpty && host != '0.0.0.0' && host != 'localhost') {
       return 'http://$host:5000/api';
     }
-    return 'http://192.168.123.37:5000/api';
+    if (host == 'localhost') {
+      return 'http://localhost:5000/api';
+    }
+    return 'http://192.168.123.39:5000/api';
   }
 
   static Future<void> setBaseUrl(String url) async {

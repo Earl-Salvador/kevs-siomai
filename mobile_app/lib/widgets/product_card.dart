@@ -18,17 +18,10 @@ class ProductCard extends StatelessWidget {
     return Icons.lunch_dining_rounded;
   }
 
-  String _getCategoryEmoji(String category) {
-    final cat = category.toLowerCase();
-    if (cat.contains('drink')) return '🥤';
-    if (cat.contains('add') || cat.contains('sauce')) return '🌶️';
-    return '🥟';
-  }
-
   Color _getCategoryColor(String category) {
     final cat = category.toLowerCase();
-    if (cat.contains('drink')) return const Color(0xFF1565C0);
-    if (cat.contains('add')) return const Color(0xFFE65100);
+    if (cat.contains('drink') || cat.contains('beverage')) return const Color(0xFF0288D1);
+    if (cat.contains('add') || cat.contains('sauce') || cat.contains('condiment')) return const Color(0xFFE65100);
     return const Color(0xFFC62828);
   }
 
@@ -158,13 +151,20 @@ class ProductCard extends StatelessWidget {
                                 color: Colors.black.withValues(alpha: 0.65),
                                 borderRadius: BorderRadius.circular(20),
                               ),
-                              child: Text(
-                                '${_getCategoryEmoji(product.category)} ${product.category}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(_getCategoryIcon(product.category), size: 13, color: Colors.white),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    product.category,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
@@ -390,13 +390,20 @@ class ProductCard extends StatelessWidget {
                             width: 0.5,
                           ),
                         ),
-                        child: Text(
-                          '${_getCategoryEmoji(product.category)} ${product.category}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(_getCategoryIcon(product.category), size: 11, color: Colors.white),
+                            const SizedBox(width: 3),
+                            Text(
+                              product.category,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -546,16 +553,21 @@ class ProductCard extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Text(
-                          '₱${product.price % 1 == 0 ? product.price.toInt() : product.price.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                            color: isOut
-                                ? Colors.grey.shade500
-                                : const Color(0xFFC62828),
+                        Flexible(
+                          child: Text(
+                            '₱${product.price % 1 == 0 ? product.price.toInt() : product.price.toStringAsFixed(2)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: isOut
+                                  ? Colors.grey.shade500
+                                  : const Color(0xFFC62828),
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 4),
 
                         // Action: Add / Stepper
                         if (inCart)

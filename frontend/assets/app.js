@@ -12,6 +12,7 @@
 import * as api from './api.js';
 import * as db from './indexedDb.js';
 import { initSyncManager, syncOfflineData } from './syncManager.js';
+import { Icons } from './icons.js';
 
 // ── Application State ────────────────────────────────────────────────────────
 const state = {
@@ -52,7 +53,7 @@ export function applyTheme(theme) {
   }
   const btn = document.getElementById('btn-toggle-theme');
   if (btn) {
-    btn.innerHTML = theme === 'light' ? '🌙' : '☀️';
+    btn.innerHTML = theme === 'light' ? Icons.moon({ size: 16 }) : Icons.sun({ size: 16 });
     btn.title = theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode';
   }
 }
@@ -156,7 +157,13 @@ export function showToast(type, title, message) {
 
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️';
+  const icon = type === 'success' 
+    ? Icons.checkCircle({ size: 20, color: 'var(--emerald-400)' }) 
+    : type === 'error' 
+    ? Icons.xCircle({ size: 20, color: 'var(--red-400)' }) 
+    : type === 'warning' 
+    ? Icons.alert({ size: 20, color: 'var(--yellow-400)' }) 
+    : Icons.info({ size: 20, color: 'var(--blue-400)' });
 
   toast.innerHTML = `
     <span class="toast-icon">${icon}</span>
@@ -251,28 +258,73 @@ function updateOfflineUI() {
 }
 
 // ── Socket.IO Connection ─────────────────────────────────────────────────────
+// ── Socket.IO Connection & Real-time Synchronization ────────────────────────
 function initSocket() {
   if (state.socket) return;
   const socketUrl = window.location.port === '5000' ? window.location.origin : 'http://localhost:5000';
 
   if (typeof io !== 'undefined') {
-    state.socket = io(socketUrl, { transports: ['websocket', 'polling'] });
+    // Use polling transport without upgrade to ensure 100% stable connection on Flask/Werkzeug
+    state.socket = io(socketUrl, { transports: ['polling'], upgrade: false, timeout: 10000 });
+
     state.socket.on('connect', () => {
-      console.log('[Socket.IO] Connected to backend');
+      console.log('[Socket.IO] Realtime connection active');
     });
+
     state.socket.on('disconnect', () => {
-      console.log('[Socket.IO] Disconnected');
+      console.log('[Socket.IO] Realtime disconnected, falling back to background heartbeat');
     });
-    state.socket.on('queue_updated', (data) => {
-      state.queueData = data;
+
+    const refreshActiveView = (data, isNew = false, newOrder = null) => {
+      if (data && data.queue) {
+        state.queueData = {
+          queue: data.queue || {},
+          orders: data.orders || [],
+          stats: data.stats || {}
+        };
+        const newOrders = data.orders || [];
+        const newQueue = data.queue || {};
+        state._orderSignature = `${newQueue.current_queue_no}_${newQueue.now_serving}_${newOrders.length}_${newOrders.map(o => `${o.id}:${o.status}`).join(',')}`;
+      }
+
       playBeep();
       updateNavbarQueuePill();
+
+      if (isNew && newOrder) {
+        const cust = newOrder.customer_name || 'Customer';
+        const qNum = newOrder.queue_no ? `#${newOrder.queue_no}` : (newOrder.queue_number ? `#${newOrder.queue_number}` : `#${newOrder.id}`);
+        const total = Number(newOrder.total_amount || newOrder.total || 0).toFixed(2);
+        showToast('success', '🥟 Bagong Order Pumasok!', `${cust} (${qNum}) — ₱${total}`);
+        state.queuePage = 1;
+      }
+
       if (state.activeTab === 'queue') {
-        renderQueueTab();
+        renderQueueTab(false);
+      } else if (state.activeTab === 'analytics') {
+        renderAnalyticsTab();
+      } else if (state.activeTab === 'inventory') {
+        renderInventoryTab();
       } else if (state.activeTab === 'simulator') {
         updateSimulatorOLED();
       }
+    };
+
+    state.socket.on('queue_updated', (data) => refreshActiveView(data));
+    state.socket.on('new_order', (newOrder) => {
+      api.getQueue().then(res => {
+        if (res && res.data) {
+          refreshActiveView(res.data, true, newOrder);
+        }
+      }).catch(() => {});
     });
+    state.socket.on('sales_updated', () => {
+      if (state.activeTab === 'analytics') {
+        renderAnalyticsTab();
+      } else if (state.activeTab === 'queue') {
+        renderQueueTab(false);
+      }
+    });
+
     state.socket.on('review_created', (review) => {
       playBeep();
       showToast('info', '⭐ New Customer Review!', `${review.customer_name || 'A customer'} rated ${review.rating} star(s)`);
@@ -280,12 +332,73 @@ function initSocket() {
         loadAndDisplayReviews();
       }
     });
+
     state.socket.on('review_updated', () => {
       if (state.activeTab === 'reviews') {
         loadAndDisplayReviews();
       }
     });
   }
+
+  // ── Auto-Refresh Dashboard Every 2 Seconds ──
+  if (state.realtimeHeartbeat) {
+    clearInterval(state.realtimeHeartbeat);
+    state.realtimeHeartbeat = null;
+  }
+
+  state.realtimeHeartbeat = setInterval(async () => {
+    if (!state.user) return;
+    try {
+      const [qRes, statsRes] = await Promise.all([
+        api.getQueue().catch(() => null),
+        api.getDashboardStats().catch(() => null)
+      ]);
+
+      if (qRes && qRes.data) {
+        const newOrders = qRes.data.orders || [];
+        const newQueue = qRes.data.queue || {};
+        const newStats = statsRes?.data || qRes.data.stats || {};
+
+        const prevOrders = (state.queueData && state.queueData.orders) || [];
+        const prevLen = prevOrders.length;
+        const isNewIncomingOrder = prevLen > 0 && newOrders.length > prevLen;
+
+        state.queueData = {
+          queue: newQueue,
+          orders: newOrders,
+          stats: newStats
+        };
+
+        const currentSignature = `${newQueue.current_queue_no}_${newQueue.now_serving}_${newOrders.length}_${newOrders.map(o => `${o.id}:${o.status}`).join(',')}`;
+        const hasChanged = state._orderSignature !== currentSignature;
+        state._orderSignature = currentSignature;
+
+        updateNavbarQueuePill();
+
+        if (isNewIncomingOrder) {
+          playBeep();
+          const latestOrder = newOrders[0];
+          const cust = latestOrder?.customer_name || 'Customer';
+          const qNum = latestOrder?.queue_no ? `#${latestOrder.queue_no}` : `#${latestOrder?.id}`;
+          const total = Number(latestOrder?.total_amount || latestOrder?.total || 0).toFixed(2);
+          showToast('success', '🥟 Bagong Order Pumasok!', `${cust} (${qNum}) — ₱${total}`);
+          state.queuePage = 1; // display top of page so latest order is immediately visible
+        }
+
+        // Unconditionally refresh live queue dashboard every 2 seconds
+        if (state.activeTab === 'queue') {
+          renderQueueTab(false);
+        } else if (state.activeTab === 'analytics' && hasChanged) {
+          renderAnalyticsTab();
+        } else if (state.activeTab === 'simulator' && hasChanged) {
+          updateSimulatorOLED();
+        }
+      }
+      await refreshPendingCount();
+    } catch (e) {
+      // Silent fail for polling errors
+    }
+  }, 2000);
 }
 
 // ── Main Render Router ───────────────────────────────────────────────────────
@@ -314,8 +427,8 @@ function renderApp() {
       <div class="nav-inner">
         <!-- Brand -->
         <div class="flex items-center gap-3" style="cursor: pointer;" id="nav-brand">
-          <div style="width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--brand-500), var(--brand-700)); display: flex; align-items: center; justify-content: center; font-size: 22px;">
-            🥟
+          <div style="width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--brand-500), var(--brand-700)); display: flex; align-items: center; justify-content: center; color: #fff;">
+            ${Icons.siomai({ size: 22, strokeWidth: 2.2 })}
           </div>
           <div>
             <div style="font-weight: 800; font-size: 16px; line-height: 1.2;" class="nav-brand-title text-white">KEVS SIOMAI</div>
@@ -331,23 +444,23 @@ function renderApp() {
         <!-- Navigation Tabs -->
         <nav class="flex items-center gap-2" style="margin-left: 16px;">
           <button class="nav-tab ${state.activeTab === 'queue' ? 'active' : ''}" data-tab="queue">
-            📋 <span>Queue</span>
+            ${Icons.queue({ size: 16 })} <span>Queue</span>
           </button>
           <button class="nav-tab ${state.activeTab === 'inventory' ? 'active' : ''}" data-tab="inventory">
-            📦 <span>Inventory</span>
+            ${Icons.package({ size: 16 })} <span>Inventory</span>
           </button>
           <button class="nav-tab ${state.activeTab === 'analytics' ? 'active' : ''}" data-tab="analytics">
-            📈 <span>Analytics</span>
+            ${Icons.analytics({ size: 16 })} <span>Analytics</span>
           </button>
           <button class="nav-tab ${state.activeTab === 'simulator' ? 'active' : ''}" data-tab="simulator">
-            ⚡ <span>Hardware</span>
+            ${Icons.hardware({ size: 16 })} <span>Hardware</span>
           </button>
           <button class="nav-tab ${state.activeTab === 'firewall' ? 'active' : ''}" data-tab="firewall">
-            🛡️ <span>Firewall</span>
+            ${Icons.shield({ size: 16 })} <span>Firewall</span>
             <span class="waf-pulse" style="margin-left: 4px;"></span>
           </button>
           <button class="nav-tab ${state.activeTab === 'reviews' ? 'active' : ''}" data-tab="reviews">
-            ⭐ <span>Reviews</span>
+            ${Icons.star({ size: 16 })} <span>Reviews</span>
           </button>
         </nav>
 
@@ -355,17 +468,17 @@ function renderApp() {
         <div class="flex items-center gap-3 ml-auto">
           <!-- Light / Dark Mode Toggle Button -->
           <button id="btn-toggle-theme" class="theme-toggle-btn" title="${state.theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}">
-            ${state.theme === 'light' ? '🌙' : '☀️'}
+            ${state.theme === 'light' ? Icons.moon({ size: 16 }) : Icons.sun({ size: 16 })}
           </button>
 
           <!-- Audio Toggle -->
           <button id="btn-toggle-audio" class="btn btn-ghost" title="Toggle audio chime">
-            ${state.audioEnabled ? '🔊' : '🔇'}
+            ${state.audioEnabled ? Icons.volume({ size: 16 }) : Icons.volumeMute({ size: 16 })}
           </button>
 
           <!-- Manual Sync Button -->
-          <button id="btn-manual-sync" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;" title="Sync offline orders">
-            🔄 <span id="sync-btn-label">Sync</span>
+          <button id="btn-manual-sync" class="btn btn-secondary flex items-center gap-1.5" style="font-size: 12px; padding: 6px 12px;" title="Sync offline orders">
+            ${Icons.refresh({ size: 14 })} <span id="sync-btn-label">Sync</span>
           </button>
 
           <!-- Network Status -->
@@ -377,8 +490,8 @@ function renderApp() {
           <!-- User & Logout -->
           <div class="flex items-center gap-2" style="border-left: 1px solid var(--dark-600); padding-left: 12px;">
             <span style="font-size: 13px; font-weight: 600;" class="text-white">${escapeHtml(state.user.full_name || state.user.username)}</span>
-            <button id="btn-logout" class="btn btn-ghost" style="padding: 4px 8px; font-size: 12px; color: var(--red-400);" title="Logout">
-              🚪 Logout
+            <button id="btn-logout" class="btn btn-ghost flex items-center gap-1" style="padding: 4px 8px; font-size: 12px; color: var(--red-400);" title="Logout">
+              ${Icons.logout({ size: 14 })} Logout
             </button>
           </div>
         </div>
@@ -421,7 +534,7 @@ function bindNavbarEvents() {
   if (btnAudio) {
     btnAudio.addEventListener('click', () => {
       state.audioEnabled = !state.audioEnabled;
-      btnAudio.innerHTML = state.audioEnabled ? '🔊' : '🔇';
+      btnAudio.innerHTML = state.audioEnabled ? Icons.volume({ size: 16 }) : Icons.volumeMute({ size: 16 });
       showToast('info', 'Audio', state.audioEnabled ? 'Sound alerts unmuted' : 'Sound muted');
     });
   }
@@ -491,7 +604,9 @@ function renderLoginPage(container) {
 
       <div class="card p-8" style="width: 100%; max-width: 420px; z-index: 10; position: relative;">
         <div class="text-center mb-6">
-          <div class="login-logo-wrap glow-orange">🥟</div>
+          <div class="login-logo-wrap glow-orange" style="display:flex;align-items:center;justify-content:center;color:#fff;">
+            ${Icons.siomai({ size: 36, strokeWidth: 2.2 })}
+          </div>
           <h1 class="text-2xl font-bold text-white">KEVS Siomai</h1>
           <p class="text-dark-300 text-sm mt-1">Admin Order Management & Security Gateway</p>
         </div>
@@ -509,8 +624,8 @@ function renderLoginPage(container) {
             <input type="password" id="login-password" class="input" value="kevs2024" required placeholder="••••••••" />
           </div>
 
-          <button type="submit" id="btn-login-submit" class="btn btn-primary w-full justify-center py-3 text-base mt-4">
-            🔑 Sign In
+          <button type="submit" id="btn-login-submit" class="btn btn-primary w-full justify-center py-3 text-base mt-4 flex items-center gap-2">
+            ${Icons.check({ size: 16 })} Sign In
           </button>
         </form>
 
@@ -529,7 +644,7 @@ function renderLoginPage(container) {
     e.preventDefault();
     errorBox.style.display = 'none';
     btnSubmit.disabled = true;
-    btnSubmit.innerHTML = '⏳ Signing in...';
+    btnSubmit.innerHTML = 'Signing in...';
 
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
@@ -569,21 +684,85 @@ async function refreshQueue() {
   }
 }
 
-async function renderQueueTab() {
+function renderActiveBannerHtml(activeOrder) {
+  if (!activeOrder) {
+    return `
+      <div class="card p-5 mb-6 text-center" style="border: 1px dashed var(--dark-600); background: rgba(15,23,42,0.4);">
+        <div style="margin-bottom: 8px; color: var(--brand-400);">${Icons.siomai({ size: 36, strokeWidth: 1.8 })}</div>
+        <div class="text-base font-bold text-dark-300">No orders yet!</div>
+        <div class="text-xs text-dark-400 mt-1">Create a new walk-in order to start the queue.</div>
+      </div>
+    `;
+  }
+  return `
+    <div class="card p-6 mb-6" style="border: 2px solid var(--brand-500); background: linear-gradient(135deg, rgba(249,115,22,0.08), rgba(15,23,42,0.9));">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+          <div style="width: 64px; height: 64px; border-radius: 16px; background: var(--brand-500); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 800;">
+            <span style="font-size: 11px; opacity: 0.85;">QUEUE</span>
+            <span style="font-size: 26px; line-height: 1;">#${activeOrder.queue_no || activeOrder.queue_number || activeOrder.id}</span>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-xl font-bold text-white">${escapeHtml(activeOrder.customer_name || 'Walk-in Customer')}</h3>
+              <span class="badge ${getStatusBadgeClass(activeOrder.status)}">${activeOrder.status}</span>
+              <span class="badge badge-gray">${activeOrder.order_type || activeOrder.type || 'Walk-in'}</span>
+            </div>
+            <p class="text-sm text-dark-300 mt-1">
+              Order #${activeOrder.id} &bull; ${formatOrderItems(activeOrder.items)}
+            </p>
+            <p class="text-xs text-dark-400 mt-1">
+              📅 ${activeOrder.date_display || new Date(activeOrder.created_at || Date.now()).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})}
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div class="text-right" style="margin-right: 12px;">
+            <div class="text-xs text-dark-300">Total Amount</div>
+            <div class="text-xl font-bold text-emerald-400">₱${Number(activeOrder.total || activeOrder.total_amount || 0).toFixed(2)}</div>
+          </div>
+          <button class="btn btn-secondary btn-buzz-order flex items-center gap-1.5" data-id="${activeOrder.id}">
+            ${Icons.bellRing({ size: 15 })} Buzz
+          </button>
+          <button class="btn btn-success btn-complete-order flex items-center gap-1.5" data-id="${activeOrder.id}">
+            ${Icons.checkCircle({ size: 15 })} Mark Completed
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function renderQueueTab(showSpinner = true) {
   const container = document.getElementById('tab-content');
   if (!container) return;
 
-  container.innerHTML = `
-    <div class="flex items-center justify-center p-8">
-      <div class="spinner"></div>
-    </div>
-  `;
+  const ordersContainer = document.getElementById('orders-container');
+  const isExistingDom = !showSpinner && ordersContainer !== null;
 
-  await refreshQueue();
-  await refreshPendingCount();
+  if (showSpinner) {
+    container.innerHTML = `
+      <div class="flex items-center justify-center p-8">
+        <div class="spinner"></div>
+      </div>
+    `;
+    await refreshQueue();
+    await refreshPendingCount();
+  } else if (!state.queueData || !state.queueData.orders) {
+    await refreshQueue();
+    await refreshPendingCount();
+  }
 
   const q = state.queueData.queue || {};
-  const orders = state.queueData.orders || [];
+  let orders = state.queueData.orders || [];
+  // Ensure active orders are sorted newest first so they immediately show on page 1 without refresh
+  orders = [...orders].sort((a, b) => {
+    const aActive = !['completed', 'delivered', 'cancelled'].includes(a.status);
+    const bActive = !['completed', 'delivered', 'cancelled'].includes(b.status);
+    if (aActive !== bActive) return bActive ? 1 : -1;
+    return (b.id || 0) - (a.id || 0);
+  });
   const stats = state.queueData.stats || {};
 
   const activeOrders = orders.filter(o => !['completed', 'delivered', 'cancelled'].includes(o.status));
@@ -602,6 +781,50 @@ async function renderQueueTab() {
        activeOrders[0])
     : null;
 
+  // Fast In-Place Real-Time DOM Update (Zero Flicker & Preserves Focus/State)
+  if (isExistingDom) {
+    const elNowServing = document.getElementById('stat-now-serving-val');
+    if (elNowServing) elNowServing.textContent = hasActive ? '#' + nowServingNum : '—';
+    const elNowServingSub = document.getElementById('stat-now-serving-sub');
+    if (elNowServingSub) elNowServingSub.textContent = hasActive ? 'Ticket in progress' : 'No orders yet!';
+
+    const elWaiting = document.getElementById('stat-waiting-val');
+    if (elWaiting) elWaiting.textContent = waitingCount;
+    const elWaitingSub = document.getElementById('stat-waiting-sub');
+    if (elWaitingSub) elWaitingSub.textContent = waitingCount === 0 ? 'No orders in line' : 'Orders in line';
+
+    const elCompleted = document.getElementById('stat-completed-val');
+    if (elCompleted) elCompleted.textContent = completedToday;
+
+    const elRevenue = document.getElementById('stat-revenue-val');
+    if (elRevenue) elRevenue.textContent = '₱' + Number(todayRevenue).toFixed(2);
+
+    const btnCallNext = document.getElementById('btn-call-next');
+    if (btnCallNext) btnCallNext.innerHTML = `${Icons.bullhorn({ size: 16 })} Call Next (#${Number(nowServingNum) + 1})`;
+
+    const bannerBox = document.getElementById('active-serving-banner-box');
+    if (bannerBox) bannerBox.innerHTML = renderActiveBannerHtml(activeOrder);
+
+    // Update tab badges
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      const filter = btn.getAttribute('data-filter');
+      const countEl = btn.querySelector('.tab-count');
+      if (filter && countEl) {
+        if (filter === 'All') countEl.textContent = orders.length;
+        else countEl.textContent = orders.filter(o => mapStage(o.status) === filter.toLowerCase()).length;
+      }
+    });
+
+    ordersContainer.innerHTML = renderOrderCards(orders);
+    bindQueueCardActions();
+    return;
+  }
+
+  const searchInput = document.getElementById('queue-search');
+  const isSearchFocused = searchInput && document.activeElement === searchInput;
+  const cursorSelectionStart = isSearchFocused ? searchInput.selectionStart : null;
+  const cursorSelectionEnd = isSearchFocused ? searchInput.selectionEnd : null;
+
   container.innerHTML = `
     <!-- Top Action Bar & Stat Cards -->
     <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -611,17 +834,17 @@ async function renderQueueTab() {
       </div>
 
       <div class="flex items-center gap-3">
-        <button id="btn-open-order-modal" class="btn btn-primary">
-          ➕ New Walk-in Order
+        <button id="btn-open-order-modal" class="btn btn-primary flex items-center gap-1.5">
+          ${Icons.plus({ size: 16 })} New Walk-in Order
         </button>
-        <button id="btn-call-next" class="btn btn-success">
-          📢 Call Next (#${Number(nowServingNum) + 1})
+        <button id="btn-call-next" class="btn btn-success flex items-center gap-1.5">
+          ${Icons.bullhorn({ size: 16 })} Call Next (#${Number(nowServingNum) + 1})
         </button>
-        <button id="btn-reset-queue" class="btn btn-secondary text-red-400" title="Reset today's queue count">
-          ⚠️ Reset
+        <button id="btn-reset-queue" class="btn btn-secondary text-red-400 flex items-center gap-1.5" title="Reset today's queue count">
+          ${Icons.alert({ size: 15 })} Reset
         </button>
-        <button id="btn-refresh-queue" class="btn btn-secondary">
-          🔄 Refresh
+        <button id="btn-refresh-queue" class="btn btn-secondary flex items-center gap-1.5">
+          ${Icons.refresh({ size: 15 })} Refresh
         </button>
       </div>
     </div>
@@ -629,87 +852,54 @@ async function renderQueueTab() {
     <!-- Stat Cards Bar -->
     <div class="grid-4 mb-6">
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(249,115,22,0.2); color: var(--brand-400);">📢</div>
+        <div class="stat-icon" style="background: rgba(249,115,22,0.2); color: var(--brand-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.bullhorn({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">NOW SERVING</div>
-          <div class="text-3xl font-bold text-white">${hasActive ? '#' + nowServingNum : '—'}</div>
-          <div class="text-xs text-brand-400 mt-1">${hasActive ? 'Ticket in progress' : 'No orders yet!'}</div>
+          <div id="stat-now-serving-val" class="text-3xl font-bold text-white">${hasActive ? '#' + nowServingNum : '—'}</div>
+          <div id="stat-now-serving-sub" class="text-xs text-brand-400 mt-1">${hasActive ? 'Ticket in progress' : 'No orders yet!'}</div>
         </div>
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(234,179,8,0.2); color: var(--yellow-400);">⏳</div>
+        <div class="stat-icon" style="background: rgba(234,179,8,0.2); color: var(--yellow-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.clock({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">WAITING IN QUEUE</div>
-          <div class="text-3xl font-bold text-white">${waitingCount}</div>
-          <div class="text-xs text-yellow-400 mt-1">${waitingCount === 0 ? 'No orders in line' : 'Orders in line'}</div>
+          <div id="stat-waiting-val" class="text-3xl font-bold text-white">${waitingCount}</div>
+          <div id="stat-waiting-sub" class="text-xs text-yellow-400 mt-1">${waitingCount === 0 ? 'No orders in line' : 'Orders in line'}</div>
         </div>
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400);">✅</div>
+        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.checkCircle({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">COMPLETED TODAY</div>
-          <div class="text-3xl font-bold text-white">${completedToday}</div>
-          <div class="text-xs text-emerald-400 mt-1">${completedToday === 0 ? 'None yet today' : 'Orders served today'}</div>
+          <div id="stat-completed-val" class="text-3xl font-bold text-white">${completedToday}</div>
+          <div id="stat-completed-sub" class="text-xs text-emerald-400 mt-1">${completedToday === 0 ? 'None yet today' : 'Orders served today'}</div>
         </div>
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400);">💰</div>
+        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.coins({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">TODAY'S REVENUE</div>
-          <div class="text-3xl font-bold text-white">₱${Number(todayRevenue).toFixed(2)}</div>
-          <div class="text-xs text-blue-400 mt-1">${todayRevenue === 0 ? 'No sales yet today' : 'Total sales today'}</div>
+          <div id="stat-revenue-val" class="text-3xl font-bold text-white">₱${Number(todayRevenue).toFixed(2)}</div>
+          <div id="stat-revenue-sub" class="text-xs text-blue-400 mt-1">${todayRevenue === 0 ? 'No sales yet today' : 'Total sales today'}</div>
         </div>
       </div>
     </div>
 
-    <!-- Active Now Serving Banner -->
-    ${activeOrder ? `
-      <div class="card p-6 mb-6" style="border: 2px solid var(--brand-500); background: linear-gradient(135deg, rgba(249,115,22,0.08), rgba(15,23,42,0.9));">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <div class="flex items-center gap-4">
-            <div style="width: 64px; height: 64px; border-radius: 16px; background: var(--brand-500); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 800;">
-              <span style="font-size: 11px; opacity: 0.85;">QUEUE</span>
-              <span style="font-size: 26px; line-height: 1;">#${activeOrder.queue_no || activeOrder.queue_number || activeOrder.id}</span>
-            </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <h3 class="text-xl font-bold text-white">${escapeHtml(activeOrder.customer_name || 'Walk-in Customer')}</h3>
-                <span class="badge ${getStatusBadgeClass(activeOrder.status)}">${activeOrder.status}</span>
-                <span class="badge badge-gray">${activeOrder.order_type || activeOrder.type || 'Walk-in'}</span>
-              </div>
-              <p class="text-sm text-dark-300 mt-1">
-                Order #${activeOrder.id} &bull; ${formatOrderItems(activeOrder.items)}
-              </p>
-              <p class="text-xs text-dark-400 mt-1">
-                📅 ${activeOrder.date_display || new Date(activeOrder.created_at || Date.now()).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})}
-              </p>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <div class="text-right" style="margin-right: 12px;">
-              <div class="text-xs text-dark-300">Total Amount</div>
-              <div class="text-xl font-bold text-emerald-400">₱${Number(activeOrder.total || activeOrder.total_amount || 0).toFixed(2)}</div>
-            </div>
-            <button class="btn btn-secondary btn-buzz-order" data-id="${activeOrder.id}">
-              🔔 Buzz
-            </button>
-            <button class="btn btn-success btn-complete-order" data-id="${activeOrder.id}">
-              ✅ Mark Completed
-            </button>
-          </div>
-        </div>
-      </div>
-    ` : `
-      <div class="card p-5 mb-6 text-center" style="border: 1px dashed var(--dark-600); background: rgba(15,23,42,0.4);">
-        <div style="font-size: 32px; margin-bottom: 6px;">🥟</div>
-        <div class="text-base font-bold text-dark-300">No orders yet!</div>
-        <div class="text-xs text-dark-400 mt-1">Create a new walk-in order to start the queue.</div>
-      </div>
-    `}
+    <!-- Active Now Serving Banner Box -->
+    <div id="active-serving-banner-box">
+      ${renderActiveBannerHtml(activeOrder)}
+    </div>
 
     <!-- Filter and Search Bar -->
     <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
@@ -737,6 +927,16 @@ async function renderQueueTab() {
   `;
 
   bindQueueEvents();
+
+  if (isSearchFocused) {
+    const newSearchInput = document.getElementById('queue-search');
+    if (newSearchInput) {
+      newSearchInput.focus();
+      if (cursorSelectionStart !== null) {
+        newSearchInput.setSelectionRange(cursorSelectionStart, cursorSelectionEnd);
+      }
+    }
+  }
 }
 
 function mapStage(status) {
@@ -762,17 +962,25 @@ function getStatusBadgeClass(status) {
   }
 }
 
+const ASSET_VERSION = '20261005_v3';
+
+function getFreshImageUrl(url) {
+  if (!url) return '';
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}v=${ASSET_VERSION}`;
+}
+
 function getProductImageUrl(name) {
-  if (!name) return '/images/hotspot_siomai.jpg';
+  if (!name) return getFreshImageUrl('/images/hotspot_siomai.jpg');
   const n = String(name).toLowerCase();
-  if (n.includes('siomai')) return '/images/hotspot_siomai.jpg';
-  if (n.includes('coke') || n.includes('coca')) return '/images/coke.jpg';
-  if (n.includes('royal')) return '/images/royal.jpg';
-  if (n.includes('sprite')) return '/images/sprite.jpg';
-  if (n.includes('chilli') || n.includes('chili')) return '/images/chilli_garlic.jpg';
-  if (n.includes('soy')) return '/images/soy_sauce.jpg';
-  if (n.includes('calamansi')) return '/images/calamansi.jpg';
-  return '/images/hotspot_siomai.jpg';
+  if (n.includes('siomai')) return getFreshImageUrl('/images/hotspot_siomai.jpg');
+  if (n.includes('coke') || n.includes('coca')) return getFreshImageUrl('/images/coke.jpg');
+  if (n.includes('royal')) return getFreshImageUrl('/images/royal.jpg');
+  if (n.includes('sprite')) return getFreshImageUrl('/images/sprite.jpg');
+  if (n.includes('chilli') || n.includes('chili')) return getFreshImageUrl('/images/chilli_garlic.jpg');
+  if (n.includes('soy')) return getFreshImageUrl('/images/soy_sauce.jpg');
+  if (n.includes('calamansi')) return getFreshImageUrl('/images/calamansi.jpg');
+  return getFreshImageUrl('/images/hotspot_siomai.jpg');
 }
 
 function formatOrderItems(items) {
@@ -846,7 +1054,10 @@ function renderOrderCards(orders) {
           if (!isNaN(newPage) && newPage >= 1 && newPage <= totalPages) {
             state.queuePage = newPage;
             const container = document.getElementById('orders-container');
-            if (container) container.innerHTML = renderOrderCards(state.queueData.orders || []);
+            if (container) {
+              container.innerHTML = renderOrderCards(state.queueData.orders || []);
+              bindQueueCardActions();
+            }
           }
         });
       });
@@ -858,7 +1069,7 @@ function renderOrderCards(orders) {
   if (paginated.length === 0) {
     return `
       <div class="card p-8 text-center" style="grid-column: 1 / -1;">
-        <div style="font-size: 40px; margin-bottom: 8px;">🥟</div>
+        <div style="margin-bottom: 8px; color: var(--brand-400);">${Icons.siomai({ size: 40, strokeWidth: 1.5 })}</div>
         <h3 class="text-lg font-bold text-white">No Orders Found</h3>
         <p class="text-sm text-dark-300 mt-1">There are currently no orders matching this filter.</p>
       </div>
@@ -892,22 +1103,22 @@ function renderOrderCards(orders) {
 
           <div class="flex items-center gap-2">
             ${order.status === 'pending' ? `
-              <button class="btn btn-secondary btn-action-status" data-id="${order.id}" data-status="preparing" style="font-size: 12px; padding: 4px 10px;">
-                🍳 Prepare
+              <button class="btn btn-secondary btn-action-status flex items-center gap-1" data-id="${order.id}" data-status="preparing" style="font-size: 12px; padding: 4px 10px;">
+                ${Icons.cook({ size: 14 })} Prepare
               </button>
             ` : order.status === 'preparing' ? `
-              <button class="btn btn-secondary btn-action-status" data-id="${order.id}" data-status="ready_pickup" style="font-size: 12px; padding: 4px 10px;">
-                🔔 Ready
+              <button class="btn btn-secondary btn-action-status flex items-center gap-1" data-id="${order.id}" data-status="ready_pickup" style="font-size: 12px; padding: 4px 10px;">
+                ${Icons.bellRing({ size: 14 })} Ready
               </button>
             ` : order.status === 'ready_pickup' || order.status === 'ready' ? `
-              <button class="btn btn-success btn-action-status" data-id="${order.id}" data-status="completed" style="font-size: 12px; padding: 4px 10px;">
-                ✅ Complete
+              <button class="btn btn-success btn-action-status flex items-center gap-1" data-id="${order.id}" data-status="completed" style="font-size: 12px; padding: 4px 10px;">
+                ${Icons.check({ size: 14 })} Complete
               </button>
             ` : ''}
 
             ${!['completed', 'delivered', 'cancelled'].includes(order.status) ? `
-              <button class="btn btn-ghost text-red-400 btn-action-status" data-id="${order.id}" data-status="cancelled" style="font-size: 12px; padding: 4px 8px;">
-                Cancel
+              <button class="btn btn-ghost text-red-400 btn-action-status flex items-center gap-1" data-id="${order.id}" data-status="cancelled" style="font-size: 12px; padding: 4px 8px;">
+                ${Icons.xCircle({ size: 13 })} Cancel
               </button>
             ` : ''}
           </div>
@@ -915,6 +1126,49 @@ function renderOrderCards(orders) {
       </div>
     `;
   }).join('');
+}
+
+function bindQueueCardActions() {
+  document.querySelectorAll('.btn-action-status').forEach(btn => {
+    btn.onclick = async (e) => {
+      const orderId = e.currentTarget.getAttribute('data-id');
+      const nextStatus = e.currentTarget.getAttribute('data-status');
+      if (!orderId || !nextStatus) return;
+
+      e.currentTarget.disabled = true;
+      try {
+        await api.updateOrderStatus(orderId, { status: nextStatus });
+        showToast('success', 'Updated', `Order marked as ${nextStatus}`);
+        await renderQueueTab(false);
+      } catch (err) {
+        showToast('error', 'Update Failed', err.message);
+        e.currentTarget.disabled = false;
+      }
+    };
+  });
+
+  document.querySelectorAll('.btn-complete-order').forEach(btn => {
+    btn.onclick = async (e) => {
+      const id = e.currentTarget.getAttribute('data-id');
+      if (!id) return;
+      e.currentTarget.disabled = true;
+      try {
+        await api.updateOrderStatus(id, { status: 'completed' });
+        showToast('success', 'Order Completed', 'Customer order fulfilled!');
+        await renderQueueTab(false);
+      } catch (err) {
+        showToast('error', 'Failed', err.message);
+        e.currentTarget.disabled = false;
+      }
+    };
+  });
+
+  document.querySelectorAll('.btn-buzz-order').forEach(btn => {
+    btn.onclick = () => {
+      playBeep();
+      showToast('info', 'Calling Customer', 'Audible alert triggered for order!');
+    };
+  });
 }
 
 function bindQueueEvents() {
@@ -927,7 +1181,10 @@ function bindQueueEvents() {
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         e.currentTarget.classList.add('active');
         const container = document.getElementById('orders-container');
-        if (container) container.innerHTML = renderOrderCards(state.queueData.orders || []);
+        if (container) {
+          container.innerHTML = renderOrderCards(state.queueData.orders || []);
+          bindQueueCardActions();
+        }
       }
     });
   });
@@ -938,7 +1195,10 @@ function bindQueueEvents() {
       state.searchQuery = e.target.value;
       state.queuePage = 1; // reset pagination when searching
       const container = document.getElementById('orders-container');
-      if (container) container.innerHTML = renderOrderCards(state.queueData.orders || []);
+      if (container) {
+        container.innerHTML = renderOrderCards(state.queueData.orders || []);
+        bindQueueCardActions();
+      }
     });
   }
 
@@ -978,44 +1238,8 @@ function bindQueueEvents() {
     openOrderModal();
   });
 
-  // Status actions
-  document.querySelectorAll('.btn-action-status').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const orderId = e.currentTarget.getAttribute('data-id');
-      const nextStatus = e.currentTarget.getAttribute('data-status');
-      if (!orderId || !nextStatus) return;
-
-      e.currentTarget.disabled = true;
-      try {
-        await api.updateOrderStatus(orderId, { status: nextStatus });
-        showToast('success', 'Updated', `Order marked as ${nextStatus}`);
-        await renderQueueTab();
-      } catch (err) {
-        showToast('error', 'Update Failed', err.message);
-      }
-    });
-  });
-
-  document.querySelectorAll('.btn-complete-order').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const id = e.currentTarget.getAttribute('data-id');
-      if (!id) return;
-      try {
-        await api.updateOrderStatus(id, { status: 'completed' });
-        showToast('success', 'Order Completed', 'Customer order fulfilled!');
-        await renderQueueTab();
-      } catch (err) {
-        showToast('error', 'Failed', err.message);
-      }
-    });
-  });
-
-  document.querySelectorAll('.btn-buzz-order').forEach(btn => {
-    btn.addEventListener('click', () => {
-      playBeep();
-      showToast('info', 'Calling Customer', 'Audible alert triggered for order!');
-    });
-  });
+  // Bind card and banner action buttons
+  bindQueueCardActions();
 }
 
 // ── New Order Modal ──────────────────────────────────────────────────────────
@@ -1040,7 +1264,9 @@ async function openOrderModal() {
     <div class="modal-backdrop" id="order-modal-backdrop">
       <div class="card modal-box p-6" style="max-width: 600px; max-height: 90vh; overflow-y: auto;" id="order-modal-box">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-xl font-bold text-white">🥟 Create Walk-in Order</h2>
+          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+            ${Icons.plusCircle({ size: 20, color: 'var(--brand-400)' })} Create Walk-in Order
+          </h2>
           <button id="btn-close-modal" class="btn btn-ghost" style="font-size: 20px;">&times;</button>
         </div>
 
@@ -1067,6 +1293,19 @@ async function openOrderModal() {
             </div>
           </div>
 
+          <div id="gcash-qr-modal-preview" style="display: none; margin-bottom: 14px; padding: 12px; background: rgba(0, 125, 254, 0.08); border: 1px solid rgba(0, 125, 254, 0.3); border-radius: 12px; text-align: center;">
+            <div style="font-size: 13px; font-weight: bold; color: #60a5fa; margin-bottom: 6px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <span>📱 Customer Scan to Pay via GCash QR</span>
+            </div>
+            <img src="/images/gcash_qr.png" alt="GCash QR" style="max-height: 200px; margin: 0 auto; border-radius: 10px; border: 2px solid #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: block;" />
+            <div style="font-size: 12px; color: #e2e8f0; font-weight: 600; margin-top: 8px;">
+              Account: JO*N LL**D C. &bull; +63 921 296 &bull;&bull;&bull;&bull;
+            </div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+              Scan QR code with GCash App to transfer payment.
+            </div>
+          </div>
+
           <div>
             <label class="block text-xs text-dark-300 font-medium mb-2">Select Items</label>
             <div class="space-y-2" style="max-height: 250px; overflow-y: auto; padding-right: 4px;">
@@ -1074,17 +1313,17 @@ async function openOrderModal() {
                 const isActive = p.is_active !== false;
                 return `
                 <div class="card-sm p-3 flex items-center justify-between" style="background: var(--dark-800); ${!isActive ? 'opacity: 0.55; border: 1px dashed rgba(239,68,68,0.3);' : ''}">
-                  <div style="display: flex; align-items: center; gap: 10px;">
-                    ${p.image_url ? `<img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" style="width: 36px; height: 36px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); ${!isActive ? 'filter: grayscale(100%);' : ''}" onerror="this.style.display='none'">` : ''}
-                    <div>
-                      <div class="font-bold text-sm text-white flex items-center gap-2">
+                  <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;">
+                    ${p.image_url ? `<img src="${escapeHtml(getFreshImageUrl(p.image_url))}" alt="${escapeHtml(p.name)}" style="width: 36px; height: 36px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0; ${!isActive ? 'filter: grayscale(100%);' : ''}" onerror="this.style.display='none'">` : ''}
+                    <div style="min-width: 0; flex: 1;">
+                      <div class="font-bold text-sm text-white flex items-center gap-2 truncate">
                         ${escapeHtml(p.name)}
-                        ${!isActive ? '<span class="badge badge-red" style="font-size: 10px; padding: 1px 6px;">🚫 Disabled</span>' : ''}
+                        ${!isActive ? '<span class="badge badge-red" style="font-size: 10px; padding: 1px 6px; flex-shrink: 0;">🚫 Disabled</span>' : ''}
                       </div>
                       <div class="text-xs text-brand-400 font-semibold">₱${Number(p.price).toFixed(2)}</div>
                     </div>
                   </div>
-                  <div class="flex items-center gap-2">
+                  <div class="flex items-center gap-2" style="flex-shrink: 0; margin-left: 8px;">
                     ${!isActive ? `
                       <span class="text-xs text-red-400 font-semibold mr-1">Unavailable</span>
                     ` : `
@@ -1151,6 +1390,14 @@ async function openOrderModal() {
   document.getElementById('btn-close-modal')?.addEventListener('click', () => {
     modalContainer.innerHTML = '';
   });
+
+  const custPaymentSelect = document.getElementById('order-cust-payment');
+  const gcashModalPreview = document.getElementById('gcash-qr-modal-preview');
+  if (custPaymentSelect && gcashModalPreview) {
+    custPaymentSelect.addEventListener('change', () => {
+      gcashModalPreview.style.display = custPaymentSelect.value === 'GCash' ? 'block' : 'none';
+    });
+  }
 
   document.getElementById('order-modal-backdrop')?.addEventListener('click', (e) => {
     if (e.target.id === 'order-modal-backdrop') {
@@ -1256,11 +1503,11 @@ async function renderInventoryTab() {
       </div>
 
       <div class="flex items-center gap-3">
-        <button id="btn-add-product" class="btn btn-primary">
-          ➕ Add Product
+        <button id="btn-add-product" class="btn btn-primary flex items-center gap-1.5">
+          ${Icons.plus({ size: 16 })} Add Product
         </button>
-        <button id="btn-refresh-inv" class="btn btn-secondary">
-          🔄 Refresh
+        <button id="btn-refresh-inv" class="btn btn-secondary flex items-center gap-1.5">
+          ${Icons.refresh({ size: 15 })} Refresh
         </button>
       </div>
     </div>
@@ -1268,7 +1515,9 @@ async function renderInventoryTab() {
     <!-- Inventory Stat Cards -->
     <div class="grid-4 mb-6">
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400);">📦</div>
+        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.package({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">TOTAL PRODUCTS</div>
           <div class="text-3xl font-bold text-white">${products.length}</div>
@@ -1277,7 +1526,9 @@ async function renderInventoryTab() {
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400);">✨</div>
+        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.checkCircle({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">ACTIVE FOR SALE</div>
           <div class="text-3xl font-bold text-emerald-400">${activeProducts.length}</div>
@@ -1286,7 +1537,9 @@ async function renderInventoryTab() {
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(239,68,68,0.2); color: var(--red-400);">🚫</div>
+        <div class="stat-icon" style="background: rgba(239,68,68,0.2); color: var(--red-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.xCircle({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">DISABLED / HIDDEN</div>
           <div class="text-3xl font-bold ${disabledProducts.length > 0 ? 'text-red-400' : 'text-white'}">${disabledProducts.length}</div>
@@ -1295,7 +1548,9 @@ async function renderInventoryTab() {
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(234,179,8,0.2); color: var(--yellow-400);">⚠️</div>
+        <div class="stat-icon" style="background: rgba(234,179,8,0.2); color: var(--yellow-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.alert({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">LOW STOCK ITEMS</div>
           <div class="text-3xl font-bold ${lowStockCount > 0 ? 'text-yellow-400' : 'text-white'}">${lowStockCount}</div>
@@ -1332,7 +1587,7 @@ async function renderInventoryTab() {
                 <tr style="border-bottom: 1px solid var(--dark-600); font-size: 14px; ${!isActive ? 'background: rgba(239, 68, 68, 0.05); opacity: 0.8;' : ''}">
                   <td class="py-3 px-4 font-bold text-white">
                     <div style="display: flex; align-items: center; gap: 10px;">
-                      ${p.image_url ? `<img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" style="width: 38px; height: 38px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); ${!isActive ? 'filter: grayscale(80%); opacity: 0.65;' : ''}" onerror="this.style.display='none'">` : ''}
+                      ${p.image_url ? `<img src="${escapeHtml(getFreshImageUrl(p.image_url))}" alt="${escapeHtml(p.name)}" style="width: 38px; height: 38px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); ${!isActive ? 'filter: grayscale(80%); opacity: 0.65;' : ''}" onerror="this.style.display='none'">` : ''}
                       <div>
                         <div class="${isActive ? 'text-white' : 'text-dark-300'}" style="${!isActive ? 'text-decoration: line-through;' : ''}">${escapeHtml(p.name)}</div>
                         ${!isActive ? `<div style="font-size: 11px; color: var(--red-400); font-weight: 600;">🚫 Hidden from customers</div>` : (p.description ? `<div style="font-size: 11px; font-weight: normal; color: var(--dark-400);">${escapeHtml(p.description)}</div>` : '')}
@@ -1446,7 +1701,9 @@ function openAddProductModal() {
     <div class="modal-backdrop" id="prod-modal-backdrop">
       <div class="card modal-box p-6" style="max-width: 500px;">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-xl font-bold text-white">📦 Add New Product</h2>
+          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+            ${Icons.package({ size: 20, color: 'var(--brand-400)' })} Add New Product
+          </h2>
           <button id="btn-close-prod-modal" class="btn btn-ghost" style="font-size: 20px;">&times;</button>
         </div>
 
@@ -1553,62 +1810,180 @@ async function renderAnalyticsTab() {
     console.warn(err);
   }
 
-  const totalRev = desc.total_sales ?? desc.summary?.total_revenue ?? 0;
-  const totalOrders = desc.total_orders ?? desc.summary?.total_orders ?? 0;
-  const avgOrderVal = desc.average_order_value ?? (totalOrders > 0 ? totalRev / totalOrders : 0);
-  const topProduct = desc.top_selling_product?.name || desc.top_products?.[0]?.name || 'Hotspot Siomai';
+  const totalRev = Number(desc.total_sales ?? desc.summary?.total_revenue ?? 0);
+  const todayRev = Number(desc.summary?.today_sales ?? desc.summary?.today_revenue ?? 0);
+  const cashRev = Number(desc.summary?.cash_revenue ?? (desc.channel_breakdown?.payment?.find(p => p.name === 'Cash')?.value ?? 0));
+  const gcashRev = Number(desc.summary?.gcash_revenue ?? (desc.channel_breakdown?.payment?.find(p => p.name === 'GCash')?.value ?? 0));
+  const totalOrders = Number(desc.total_orders ?? desc.summary?.total_orders ?? 0);
+  const totalCompleted = Number(desc.total_completed ?? desc.summary?.total_completed ?? 0);
+  const avgOrderVal = Number(desc.average_order_value ?? (totalCompleted > 0 ? totalRev / totalCompleted : (totalOrders > 0 ? totalRev / totalOrders : 0)));
+
+  const topProducts = desc.top_products || [];
+  const topRevenueProduct = topProducts.length > 0
+    ? [...topProducts].sort((a, b) => (Number(b.revenue) || 0) - (Number(a.revenue) || 0))[0]
+    : null;
+  const topVolumeProduct = desc.top_selling_product?.name || (topProducts.length > 0 ? topProducts[0].name : (totalRev > 0 ? 'HotSpot Siomai' : 'No sales recorded yet'));
+  const hasDbSales = totalRev > 0 || topProducts.length > 0;
 
   container.innerHTML = `
     <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
       <div>
-        <h1 class="text-2xl font-bold text-white">Sales & Predictive Analytics</h1>
-        <p class="text-dark-300 text-sm">Powered by Scikit-learn Machine Learning & Time-Series Models</p>
+        <h1 class="text-2xl font-bold text-white">Revenue & Sales Analytics</h1>
+        <p class="text-dark-300 text-sm">Real-time financial performance, revenue tracking & predictive demand</p>
       </div>
-      <button id="btn-refresh-analytics" class="btn btn-secondary">
-        🔄 Refresh Data
+      <button id="btn-refresh-analytics" class="btn btn-secondary flex items-center gap-1.5">
+        ${Icons.refresh({ size: 15 })} Refresh Data
       </button>
     </div>
 
-    <!-- Analytics Key Metrics -->
+    <!-- Database Connection & Revenue Status Banner -->
+    ${hasDbSales ? `
+      <div class="card p-4 mb-6 flex flex-wrap items-center justify-between gap-4" style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.3);">
+        <div class="flex items-center gap-3">
+          <div style="display:flex;align-items:center;justify-content:center;">${Icons.coins({ size: 26, color: 'var(--emerald-400)' })}</div>
+          <div>
+            <div class="text-sm font-semibold text-emerald-400">Live Database Connected (kevs_siomai)</div>
+            <div class="text-xs text-dark-300">
+              Accurately calculated from active database records. Reflecting <strong>₱${totalRev.toFixed(2)}</strong> total revenue (Cash: <strong>₱${cashRev.toFixed(2)}</strong> &bull; GCash: <strong>₱${gcashRev.toFixed(2)}</strong>) across <strong>${totalOrders} order(s)</strong>.
+            </div>
+          </div>
+        </div>
+        <span class="badge badge-success">● Synchronized with Database</span>
+      </div>
+    ` : `
+      <div class="card p-4 mb-6 flex flex-wrap items-center justify-between gap-4" style="background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.3);">
+        <div class="flex items-center gap-3">
+          <div style="display:flex;align-items:center;justify-content:center;">${Icons.info({ size: 26, color: 'var(--yellow-400)' })}</div>
+          <div>
+            <div class="text-sm font-semibold text-yellow-400">Database Status: No Completed Sales Recorded Yet</div>
+            <div class="text-xs text-dark-300">
+              There are currently 0 completed sales transactions stored in the database. When customer orders are confirmed and served, your actual shop revenue, peak hours, and product volumes will dynamically appear here.
+            </div>
+          </div>
+        </div>
+        <span class="badge badge-warning">Awaiting Sales Data</span>
+      </div>
+    `}
+
+    <!-- Primary Revenue Metric Cards -->
     <div class="grid-4 mb-6">
-      <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400);">💰</div>
+      <div class="card stat-card" style="border-left: 4px solid var(--emerald-500);">
+        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.coins({ size: 24 })}
+        </div>
         <div>
-          <div class="text-xs text-dark-300 font-medium">TOTAL SALES</div>
-          <div class="text-2xl font-bold text-white">₱${Number(totalRev).toFixed(2)}</div>
-          <div class="text-xs text-emerald-400 mt-1">Recorded revenue</div>
+          <div class="text-xs text-dark-300 font-medium">TOTAL REVENUE</div>
+          <div class="text-2xl font-bold text-white">₱${totalRev.toFixed(2)}</div>
+          <div class="text-xs text-emerald-400 mt-1">${hasDbSales ? 'All-time shop sales' : 'No sales yet'}</div>
         </div>
       </div>
 
-      <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400);">📋</div>
+      <div class="card stat-card" style="border-left: 4px solid var(--blue-500);">
+        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.clock({ size: 24 })}
+        </div>
         <div>
-          <div class="text-xs text-dark-300 font-medium">TOTAL ORDERS</div>
-          <div class="text-2xl font-bold text-white">${totalOrders}</div>
-          <div class="text-xs text-blue-400 mt-1">Fulfilled tickets</div>
+          <div class="text-xs text-dark-300 font-medium">TODAY'S REVENUE</div>
+          <div class="text-2xl font-bold text-white">₱${todayRev.toFixed(2)}</div>
+          <div class="text-xs text-blue-400 mt-1">${todayRev > 0 ? 'Earned today' : 'No sales today yet'}</div>
         </div>
       </div>
 
-      <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(249,115,22,0.2); color: var(--brand-400);">📈</div>
+      <div class="card stat-card" style="border-left: 4px solid var(--brand-500);">
+        <div class="stat-icon" style="background: rgba(249,115,22,0.2); color: var(--brand-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.coins({ size: 24 })}
+        </div>
         <div>
-          <div class="text-xs text-dark-300 font-medium">AVG ORDER VALUE</div>
-          <div class="text-2xl font-bold text-white">₱${Number(avgOrderVal).toFixed(2)}</div>
-          <div class="text-xs text-brand-400 mt-1">Per transaction</div>
+          <div class="text-xs text-dark-300 font-medium">CASH REVENUE</div>
+          <div class="text-2xl font-bold text-white">₱${cashRev.toFixed(2)}</div>
+          <div class="text-xs text-brand-400 mt-1">${totalRev > 0 ? Math.round((cashRev / totalRev) * 100) + '% of total revenue' : 'Cash payments'}</div>
         </div>
       </div>
 
-      <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(192,132,252,0.2); color: var(--purple-400);">👑</div>
+      <div class="card stat-card" style="border-left: 4px solid var(--purple-500);">
+        <div class="stat-icon" style="background: rgba(168,85,247,0.2); color: var(--purple-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.coins({ size: 24 })}
+        </div>
         <div>
-          <div class="text-xs text-dark-300 font-medium">TOP SELLER</div>
-          <div class="text-lg font-bold text-white truncate" style="max-width: 140px;">${escapeHtml(topProduct)}</div>
-          <div class="text-xs text-purple-400 mt-1">Highest volume</div>
+          <div class="text-xs text-dark-300 font-medium">GCASH REVENUE</div>
+          <div class="text-2xl font-bold text-white">₱${gcashRev.toFixed(2)}</div>
+          <div class="text-xs text-purple-400 mt-1">${totalRev > 0 ? Math.round((gcashRev / totalRev) * 100) + '% of total revenue' : 'Digital payments'}</div>
         </div>
       </div>
     </div>
 
-    <!-- Charts Row -->
+    <!-- Secondary Operational Cards -->
+    <div class="grid-4 mb-6">
+      <div class="card stat-card">
+        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.queue({ size: 24 })}
+        </div>
+        <div>
+          <div class="text-xs text-dark-300 font-medium">TOTAL ORDERS</div>
+          <div class="text-2xl font-bold text-white">${totalOrders}</div>
+          <div class="text-xs text-blue-400 mt-1">${totalCompleted} completed / served</div>
+        </div>
+      </div>
+
+      <div class="card stat-card">
+        <div class="stat-icon" style="background: rgba(234,179,8,0.2); color: var(--yellow-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.analytics({ size: 24 })}
+        </div>
+        <div>
+          <div class="text-xs text-dark-300 font-medium">AVG ORDER VALUE</div>
+          <div class="text-2xl font-bold text-white">₱${avgOrderVal.toFixed(2)}</div>
+          <div class="text-xs text-yellow-400 mt-1">Average ticket size</div>
+        </div>
+      </div>
+
+      <div class="card stat-card">
+        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.star({ size: 24 })}
+        </div>
+        <div>
+          <div class="text-xs text-dark-300 font-medium">TOP REVENUE ITEM</div>
+          <div class="text-lg font-bold text-white truncate" style="max-width: 140px;" title="${topRevenueProduct ? escapeHtml(topRevenueProduct.name) : 'None'}">
+            ${topRevenueProduct ? escapeHtml(topRevenueProduct.name) : 'None'}
+          </div>
+          <div class="text-xs text-emerald-400 mt-1">${topRevenueProduct ? '₱' + Number(topRevenueProduct.revenue).toFixed(2) + ' generated' : 'No sales yet'}</div>
+        </div>
+      </div>
+
+      <div class="card stat-card">
+        <div class="stat-icon" style="background: rgba(192,132,252,0.2); color: var(--purple-400); display:flex;align-items:center;justify-content:center;">
+          ${Icons.package({ size: 24 })}
+        </div>
+        <div>
+          <div class="text-xs text-dark-300 font-medium">TOP VOLUME SELLER</div>
+          <div class="text-lg font-bold text-white truncate" style="max-width: 140px;" title="${escapeHtml(topVolumeProduct)}">
+            ${escapeHtml(topVolumeProduct)}
+          </div>
+          <div class="text-xs text-purple-400 mt-1">${desc.top_selling_product?.quantity ? `${desc.top_selling_product.quantity} sold` : (hasDbSales ? 'Highest volume' : 'No sales yet')}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Revenue Trend Chart (Full Width) -->
+    <div class="card p-6 mb-6">
+      <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+        <div>
+          <h3 class="text-base font-bold text-white flex items-center gap-2">
+            <span>📈</span> Daily Revenue Timeline (Last 14 Days)
+          </h3>
+          <p class="text-xs text-dark-300">Daily shop earnings recorded from confirmed transactions</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-semibold px-3 py-1 rounded-full" style="background: rgba(16,185,129,0.15); color: var(--emerald-400); border: 1px solid rgba(16,185,129,0.3);">
+            Recorded Revenue: ₱${totalRev.toFixed(2)}
+          </span>
+        </div>
+      </div>
+      <div class="chart-container" style="height: 250px;">
+        <canvas id="revenueChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Demand & Product Revenue Share Row -->
     <div class="grid-2 mb-6">
       <div class="card p-6">
         <h3 class="text-base font-bold text-white mb-4">📊 Peak Hours Demand Profile</h3>
@@ -1618,10 +1993,75 @@ async function renderAnalyticsTab() {
       </div>
 
       <div class="card p-6">
-        <h3 class="text-base font-bold text-white mb-4">🥧 Product Category & Volume Share</h3>
+        <h3 class="text-base font-bold text-white mb-4">🥧 Product Revenue Contribution</h3>
         <div class="chart-container" style="height: 260px;">
           <canvas id="productChart"></canvas>
         </div>
+      </div>
+    </div>
+
+    <!-- Product Revenue Breakdown Table -->
+    <div class="card p-6 mb-6 overflow-hidden">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="text-base font-bold text-white flex items-center gap-2">
+            <span>🧾</span> Revenue by Product Breakdown
+          </h3>
+          <p class="text-xs text-dark-300">Detailed sales volume and revenue generated per menu item</p>
+        </div>
+        <span class="text-xs text-dark-300">${topProducts.length} item(s) sold</span>
+      </div>
+
+      <div style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+          <thead>
+            <tr style="border-bottom: 1px solid var(--dark-600); color: var(--dark-400); font-size: 12px; text-transform: uppercase;">
+              <th class="py-3 px-4">Menu Item</th>
+              <th class="py-3 px-4 text-center">Units Sold</th>
+              <th class="py-3 px-4 text-right">Revenue Generated</th>
+              <th class="py-3 px-4 text-center">Revenue Share</th>
+              <th class="py-3 px-4 text-center">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${topProducts.length > 0 ? topProducts.map(p => {
+              const pRev = Number(p.revenue || 0);
+              const pQty = Number(p.quantity || 0);
+              const sharePct = totalRev > 0 ? Math.round((pRev / totalRev) * 100) : 0;
+              const isTop = topRevenueProduct && topRevenueProduct.name === p.name && pRev > 0;
+
+              return `
+                <tr style="border-bottom: 1px solid var(--dark-600); font-size: 14px;">
+                  <td class="py-3 px-4 font-bold text-white">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span>${pRev > 0 ? '🥟' : '🥢'}</span>
+                      <span>${escapeHtml(p.name)}</span>
+                    </div>
+                  </td>
+                  <td class="py-3 px-4 text-center text-dark-200 font-semibold">${pQty} pcs</td>
+                  <td class="py-3 px-4 text-right font-bold text-emerald-400">₱${pRev.toFixed(2)}</td>
+                  <td class="py-3 px-4 text-center">
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 6px;">
+                      <div style="width: 60px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 999px; overflow: hidden;">
+                        <div style="width: ${sharePct}%; height: 100%; background: var(--emerald-500); border-radius: 999px;"></div>
+                      </div>
+                      <span class="text-xs text-dark-300 font-semibold">${sharePct}%</span>
+                    </div>
+                  </td>
+                  <td class="py-3 px-4 text-center">
+                    ${isTop ? '<span class="badge badge-success" style="font-size: 11px;">👑 Top Earner</span>' : (pRev > 0 ? '<span class="badge" style="background: rgba(59,130,246,0.15); color: var(--blue-400); font-size: 11px;">Active</span>' : '<span class="badge" style="background: rgba(148,163,184,0.15); color: #94a3b8; font-size: 11px;">Add-on</span>')}
+                  </td>
+                </tr>
+              `;
+            }).join('') : `
+              <tr>
+                <td colspan="5" class="py-6 text-center text-dark-400 text-sm">
+                  No completed product sales recorded in the database yet.
+                </td>
+              </tr>
+            `}
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -1638,20 +2078,44 @@ async function renderAnalyticsTab() {
       <div class="grid-3 mt-4">
         <div class="p-4 rounded-xl" style="background: rgba(0,0,0,0.3);">
           <div class="text-xs text-blue-400 font-semibold mb-1">📅 TOMORROW'S FORECAST</div>
-          <div class="text-xl font-bold text-white">~₱${Number(pred.predicted_sales ?? pred.next_day_forecast ?? 3500).toFixed(2)}</div>
-          <div class="text-xs text-dark-300 mt-1">Expected ${pred.predicted_orders ?? 45} orders</div>
+          <div class="text-xl font-bold text-white">
+            ${pred.predicted_sales && Number(pred.predicted_sales) > 0
+              ? `~₱${Number(pred.predicted_sales).toFixed(2)}`
+              : (totalRev > 0 ? `~₱${totalRev.toFixed(2)}` : 'Awaiting Data')}
+          </div>
+          <div class="text-xs text-dark-300 mt-1">
+            ${pred.predicted_sales && Number(pred.predicted_sales) > 0
+              ? `Expected ${pred.predicted_orders ?? 1} orders`
+              : (totalRev > 0 ? `Based on initial ${totalOrders} order(s)` : 'Requires 3+ days for ML')}
+          </div>
         </div>
 
         <div class="p-4 rounded-xl" style="background: rgba(0,0,0,0.3);">
           <div class="text-xs text-yellow-400 font-semibold mb-1">⏰ ESTIMATED PEAK HOURS</div>
-          <div class="text-xl font-bold text-white">11:00 AM &bull; 6:00 PM</div>
-          <div class="text-xs text-dark-300 mt-1">Lunch & Dinner student rush</div>
+          <div class="text-xl font-bold text-white">
+            ${desc.peak_hours && desc.peak_hours.some(h => h.orders > 0)
+              ? desc.peak_hours.filter(h => h.orders > 0).map(h => h.label).slice(0, 2).join(' • ')
+              : '11:00 AM • 6:00 PM'}
+          </div>
+          <div class="text-xs text-dark-300 mt-1">
+            ${desc.peak_hours && desc.peak_hours.some(h => h.orders > 0)
+              ? 'Based on customer order timestamps'
+              : 'Typical lunch & dinner rush window'}
+          </div>
         </div>
 
         <div class="p-4 rounded-xl" style="background: rgba(0,0,0,0.3);">
           <div class="text-xs text-emerald-400 font-semibold mb-1">🥟 PREPARATION ADVICE</div>
-          <div class="text-base font-bold text-white">Pre-steam Hotspot Siomai</div>
-          <div class="text-xs text-dark-300 mt-1">Prepare buffer before 11:00 AM</div>
+          <div class="text-base font-bold text-white">
+            ${topVolumeProduct && topVolumeProduct !== 'No sales recorded yet'
+              ? `Pre-steam ${escapeHtml(topVolumeProduct)}`
+              : 'Prepare standard inventory'}
+          </div>
+          <div class="text-xs text-dark-300 mt-1">
+            ${topVolumeProduct && topVolumeProduct !== 'No sales recorded yet'
+              ? 'Highest demand item in your shop'
+              : 'Maintain safety stock for walk-ins'}
+          </div>
         </div>
       </div>
     </div>
@@ -1671,23 +2135,96 @@ function initAnalyticsCharts(desc) {
   if (typeof Chart === 'undefined') return;
 
   // Destroy previous instances if any
+  if (state.charts.revenue) state.charts.revenue.destroy();
   if (state.charts.sales) state.charts.sales.destroy();
   if (state.charts.products) state.charts.products.destroy();
 
-  // 1. Sales Chart from Peak Hours or Daily Sales
+  // 1. Revenue Timeline Chart
+  const revenueCanvas = document.getElementById('revenueChart');
+  if (revenueCanvas) {
+    const rawLabels = desc.daily_sales?.labels || [];
+    const rawData = desc.daily_sales?.data || [];
+
+    // Slice last 14 days for optimal readability
+    const displayLabels = rawLabels.slice(-14).map(l => {
+      try {
+        const parts = l.split('-');
+        if (parts.length === 3) {
+          const mNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          return `${mNames[parseInt(parts[1], 10) - 1]} ${parseInt(parts[2], 10)}`;
+        }
+      } catch (e) {}
+      return l;
+    });
+    const displayData = rawData.slice(-14);
+
+    const ctx = revenueCanvas.getContext('2d');
+    let gradient = null;
+    if (ctx) {
+      gradient = ctx.createLinearGradient(0, 0, 0, 240);
+      gradient.addColorStop(0, 'rgba(16, 185, 129, 0.35)');
+      gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+    }
+
+    state.charts.revenue = new Chart(revenueCanvas, {
+      type: 'line',
+      data: {
+        labels: displayLabels.length > 0 ? displayLabels : ['No Data'],
+        datasets: [{
+          label: 'Revenue (₱)',
+          data: displayData.length > 0 ? displayData : [0],
+          borderColor: '#10b981',
+          borderWidth: 2.5,
+          backgroundColor: gradient || 'rgba(16, 185, 129, 0.1)',
+          fill: true,
+          tension: 0.3,
+          pointBackgroundColor: '#10b981',
+          pointBorderColor: '#ffffff',
+          pointBorderWidth: 1.5,
+          pointHoverRadius: 6,
+          pointRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (context) => ` Revenue: ₱${Number(context.raw || 0).toFixed(2)}`
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+          y: {
+            beginAtZero: true,
+            ticks: {
+              color: '#94a3b8',
+              callback: (value) => `₱${value}`
+            },
+            grid: { color: 'rgba(255,255,255,0.05)' }
+          }
+        }
+      }
+    });
+  }
+
+  // 2. Sales Chart from Peak Hours or Daily Sales
   const salesCanvas = document.getElementById('salesChart');
   if (salesCanvas) {
     let hours = [];
     let salesData = [];
 
     if (desc.peak_hours && desc.peak_hours.length > 0) {
-      // Filter interesting hours (7am to 10pm)
+      // Filter shop operating hours (7am to 10pm)
       const filteredHours = desc.peak_hours.filter(h => h.hour >= 7 && h.hour <= 22);
       hours = filteredHours.map(h => h.label);
       salesData = filteredHours.map(h => h.orders);
     } else {
-      hours = ['8 AM', '11 AM', '12 PM', '1 PM', '3 PM', '5 PM', '7 PM', '8 PM'];
-      salesData = [5, 18, 26, 22, 12, 28, 20, 10];
+      hours = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+      salesData = [0, 0, 0, 0, 0, 0, 0, 0];
     }
 
     state.charts.sales = new Chart(salesCanvas, {
@@ -1709,24 +2246,35 @@ function initAnalyticsCharts(desc) {
         },
         scales: {
           x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-          y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }
+          y: { 
+            beginAtZero: true,
+            ticks: { color: '#94a3b8', stepSize: 1 }, 
+            grid: { color: 'rgba(255,255,255,0.05)' } 
+          }
         }
       }
     });
   }
 
-  // 2. Product Share Chart
+  // 3. Product Revenue Share Chart
   const productCanvas = document.getElementById('productChart');
   if (productCanvas) {
     let labels = [];
-    let counts = [];
+    let revValues = [];
+    let bgColors = ['#10b981', '#3b82f6', '#f97316', '#a855f7', '#eab308', '#ec4899', '#06b6d4'];
 
-    if (desc.top_products && desc.top_products.length > 0) {
-      labels = desc.top_products.map(p => p.name);
-      counts = desc.top_products.map(p => p.quantity);
+    const topProductsWithRev = (desc.top_products || []).filter(p => Number(p.revenue || 0) > 0);
+
+    if (topProductsWithRev.length > 0) {
+      labels = topProductsWithRev.map(p => `${p.name} (₱${Number(p.revenue).toFixed(2)})`);
+      revValues = topProductsWithRev.map(p => Number(p.revenue));
+    } else if (desc.top_products && desc.top_products.length > 0) {
+      labels = desc.top_products.map(p => `${p.name} (${p.quantity} sold)`);
+      revValues = desc.top_products.map(p => p.quantity);
     } else {
-      labels = ['Hotspot Siomai', 'Chili Garlic (Small)', 'Chili Garlic (Large)', 'Sauce Pack'];
-      counts = [150, 45, 30, 80];
+      labels = ['No Completed Sales Recorded'];
+      revValues = [1];
+      bgColors = ['rgba(148, 163, 184, 0.2)'];
     }
 
     state.charts.products = new Chart(productCanvas, {
@@ -1734,8 +2282,8 @@ function initAnalyticsCharts(desc) {
       data: {
         labels: labels,
         datasets: [{
-          data: counts,
-          backgroundColor: ['#f97316', '#3b82f6', '#10b981', '#a855f7', '#eab308'],
+          data: revValues,
+          backgroundColor: bgColors.slice(0, revValues.length),
           borderWidth: 0
         }]
       },
@@ -1743,7 +2291,12 @@ function initAnalyticsCharts(desc) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } }
+          legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } },
+          tooltip: {
+            callbacks: {
+              label: (context) => ` ${context.label}`
+            }
+          }
         }
       }
     });
@@ -1776,7 +2329,7 @@ async function renderSimulatorTab() {
       <div class="card p-6">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
-            📟 SSD1306 Virtual OLED Screen (128x64)
+            ${Icons.hardware({ size: 18, color: 'var(--emerald-400)' })} SSD1306 Virtual OLED Screen (128x64)
           </h3>
           <span class="badge badge-green" id="esp32-status-badge">ESP32 Connected</span>
         </div>
@@ -1800,14 +2353,14 @@ async function renderSimulatorTab() {
 
         <!-- Simulator Pushbuttons -->
         <div class="flex flex-wrap gap-3">
-          <button id="btn-sim-press-walkin" class="btn btn-primary flex-1 justify-center">
-            🔘 Press Walk-in Ticket Button
+          <button id="btn-sim-press-walkin" class="btn btn-primary flex-1 justify-center flex items-center gap-1.5">
+            ${Icons.plusCircle({ size: 16 })} Press Walk-in Ticket Button
           </button>
-          <button id="btn-sim-call-next" class="btn btn-success flex-1 justify-center">
-            📢 Call Next Ticket
+          <button id="btn-sim-call-next" class="btn btn-success flex-1 justify-center flex items-center gap-1.5">
+            ${Icons.bullhorn({ size: 16 })} Call Next Ticket
           </button>
-          <button id="btn-sim-beep" class="btn btn-secondary justify-center">
-            🔔 Test Buzzer
+          <button id="btn-sim-beep" class="btn btn-secondary justify-center flex items-center gap-1.5">
+            ${Icons.bellRing({ size: 16 })} Test Buzzer
           </button>
         </div>
       </div>
@@ -1816,7 +2369,7 @@ async function renderSimulatorTab() {
       <div class="card p-6">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
-            💻 ESP32 UART Serial Monitor (115200 baud)
+            ${Icons.hardware({ size: 18, color: 'var(--blue-400)' })} ESP32 UART Serial Monitor (115200 baud)
           </h3>
           <button id="btn-clear-serial" class="btn btn-ghost" style="font-size: 12px; padding: 4px 8px;">
             Clear Log
@@ -1953,8 +2506,8 @@ async function renderFirewallTab() {
     <div class="card p-6 mb-6 firewall-shield-card">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-4">
-          <div style="width: 56px; height: 56px; border-radius: 16px; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); display: flex; align-items: center; justify-content: center; font-size: 28px;">
-            🛡️
+          <div style="width: 56px; height: 56px; border-radius: 16px; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); display: flex; align-items: center; justify-content: center; color: var(--emerald-400);">
+            ${Icons.shield({ size: 30, color: 'var(--emerald-400)' })}
           </div>
           <div>
             <div class="flex items-center gap-2">
@@ -1970,8 +2523,8 @@ async function renderFirewallTab() {
         </div>
 
         <div class="flex items-center gap-3">
-          <button id="btn-refresh-waf" class="btn btn-secondary">
-            🔄 Refresh Status
+          <button id="btn-refresh-waf" class="btn btn-secondary flex items-center gap-1.5">
+            ${Icons.refresh({ size: 15 })} Refresh Status
           </button>
         </div>
       </div>
@@ -1980,7 +2533,9 @@ async function renderFirewallTab() {
     <!-- 4 Firewall Stat Metrics -->
     <div class="grid-4 mb-6">
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400);">📡</div>
+        <div class="stat-icon" style="background: rgba(59,130,246,0.2); color: var(--blue-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.analytics({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">REQUESTS SCANNED</div>
           <div class="text-3xl font-bold text-white">${stats.total_scanned || 0}</div>
@@ -1989,7 +2544,9 @@ async function renderFirewallTab() {
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(239,68,68,0.2); color: var(--red-400);">🚫</div>
+        <div class="stat-icon" style="background: rgba(239,68,68,0.2); color: var(--red-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.xCircle({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">THREATS INTERCEPTED</div>
           <div class="text-3xl font-bold text-red-400">${stats.total_blocked || 0}</div>
@@ -1998,7 +2555,9 @@ async function renderFirewallTab() {
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(234,179,8,0.2); color: var(--yellow-400);">🔒</div>
+        <div class="stat-icon" style="background: rgba(234,179,8,0.2); color: var(--yellow-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.shield({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">BANNED ATTACKER IPS</div>
           <div class="text-3xl font-bold text-white">${(stats.banned_ips_count || 0) + (stats.blacklisted_ips_count || 0)}</div>
@@ -2007,7 +2566,9 @@ async function renderFirewallTab() {
       </div>
 
       <div class="card stat-card">
-        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400);">⚙️</div>
+        <div class="stat-icon" style="background: rgba(16,185,129,0.2); color: var(--emerald-400); display: flex; align-items: center; justify-content: center;">
+          ${Icons.checkCircle({ size: 24 })}
+        </div>
         <div>
           <div class="text-xs text-dark-300 font-medium">ACTIVE RULES</div>
           <div class="text-3xl font-bold text-emerald-400">${stats.rules_count || 28} Rules</div>
@@ -2019,7 +2580,7 @@ async function renderFirewallTab() {
     <!-- Active Engines Badges -->
     <div class="card p-5 mb-6">
       <h3 class="text-sm font-bold text-white mb-3 flex items-center gap-2">
-        <span>⚡</span> Active Inspection Engines
+        ${Icons.hardware({ size: 16, color: 'var(--amber-400)' })} Active Inspection Engines
       </h3>
       <div class="grid-3 gap-3">
         <div class="waf-engine-badge active">
@@ -2234,7 +2795,7 @@ async function renderReviewsTab() {
       <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 class="text-2xl font-black text-white flex items-center gap-3">
-            <span>⭐ Customer Reviews & Feedback</span>
+            <span class="flex items-center gap-2">${Icons.star({ size: 22, color: '#f59e0b' })} Customer Reviews & Feedback</span>
             <span id="reviews-count-badge" class="badge badge-amber font-mono text-sm px-2.5 py-1">0 reviews</span>
           </h2>
           <p class="text-dark-300 text-sm mt-1">
@@ -2244,10 +2805,10 @@ async function renderReviewsTab() {
 
         <div class="flex items-center gap-3 w-full sm:w-auto">
           <button id="btn-refresh-reviews" class="btn btn-secondary flex items-center gap-2">
-            🔄 <span>Refresh</span>
+            ${Icons.refresh({ size: 16 })} <span>Refresh</span>
           </button>
           <button id="btn-clear-reviews" class="btn btn-danger flex items-center gap-2" title="Clear all customer reviews">
-            🗑️ <span>Clear All Reviews</span>
+            ${Icons.trash({ size: 16 })} <span>Clear All Reviews</span>
           </button>
         </div>
       </div>
@@ -2265,28 +2826,28 @@ async function renderReviewsTab() {
             All Reviews
           </button>
           <button class="filter-pill ${state.reviewsFilter === 'active' ? 'active' : ''}" data-filter="active">
-            🟢 Active (Visible)
+            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 mr-1.5"></span>Active (Visible)
           </button>
           <button class="filter-pill ${state.reviewsFilter === 'disabled' ? 'active' : ''}" data-filter="disabled">
-            ⛔ Disabled (Hidden)
+            <span class="inline-block w-2 h-2 rounded-full bg-red-400 mr-1.5"></span>Disabled (Hidden)
           </button>
           <button class="filter-pill ${state.reviewsFilter === 'replied' ? 'active' : ''}" data-filter="replied">
-            💬 Replied
+            ${Icons.message({ size: 13, className: 'mr-1' })} Replied
           </button>
           <button class="filter-pill ${state.reviewsFilter === 'pending_reply' ? 'active' : ''}" data-filter="pending_reply">
-            ⏳ Needs Reply
+            ${Icons.clock({ size: 13, className: 'mr-1' })} Needs Reply
           </button>
         </div>
 
         <!-- Rating Filter & Search -->
         <div class="flex items-center gap-3">
           <select id="reviews-star-select" class="form-input" style="width: auto; padding: 6px 12px; font-size: 13px;">
-            <option value="all">⭐ All Star Ratings</option>
-            <option value="5" ${state.reviewsStarFilter === '5' ? 'selected' : ''}>⭐⭐⭐⭐⭐ (5 Stars)</option>
-            <option value="4" ${state.reviewsStarFilter === '4' ? 'selected' : ''}>⭐⭐⭐⭐ (4 Stars)</option>
-            <option value="3" ${state.reviewsStarFilter === '3' ? 'selected' : ''}>⭐⭐⭐ (3 Stars)</option>
-            <option value="2" ${state.reviewsStarFilter === '2' ? 'selected' : ''}>⭐⭐ (2 Stars)</option>
-            <option value="1" ${state.reviewsStarFilter === '1' ? 'selected' : ''}>⭐ (1 Star)</option>
+            <option value="all">★ All Star Ratings</option>
+            <option value="5" ${state.reviewsStarFilter === '5' ? 'selected' : ''}>★★★★★ (5 Stars)</option>
+            <option value="4" ${state.reviewsStarFilter === '4' ? 'selected' : ''}>★★★★☆ (4 Stars)</option>
+            <option value="3" ${state.reviewsStarFilter === '3' ? 'selected' : ''}>★★★☆☆ (3 Stars)</option>
+            <option value="2" ${state.reviewsStarFilter === '2' ? 'selected' : ''}>★★☆☆☆ (2 Stars)</option>
+            <option value="1" ${state.reviewsStarFilter === '1' ? 'selected' : ''}>★☆☆☆☆ (1 Star)</option>
           </select>
 
           <input
@@ -2303,7 +2864,7 @@ async function renderReviewsTab() {
       <!-- Reviews Feed List -->
       <div id="reviews-list-container" class="space-y-4">
         <div class="text-center py-12 text-dark-300">
-          <div class="animate-spin text-3xl mb-2">⏳</div>
+          <div class="mb-2 text-brand-400 flex justify-center">${Icons.spinner({ size: 28 })}</div>
           Loading reviews...
         </div>
       </div>
@@ -2319,10 +2880,10 @@ function bindReviewsToolbarEvents() {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
       refreshBtn.disabled = true;
-      refreshBtn.innerHTML = '⏳ <span>Refreshing...</span>';
+      refreshBtn.innerHTML = `${Icons.spinner({ size: 14 })} <span>Refreshing...</span>`;
       await loadAndDisplayReviews();
       refreshBtn.disabled = false;
-      refreshBtn.innerHTML = '🔄 <span>Refresh</span>';
+      refreshBtn.innerHTML = `${Icons.refresh({ size: 16 })} <span>Refresh</span>`;
       showToast('info', 'Reviews Refreshed', 'Loaded latest customer reviews.');
     });
   }
@@ -2336,9 +2897,9 @@ function bindReviewsToolbarEvents() {
         showToast('info', 'Reviews Empty', 'There are no reviews to clear.');
         return;
       }
-      if (!confirm(`⚠️ Are you sure you want to permanently clear all ${currentCount} customer reviews?`)) return;
+      if (!confirm(`Are you sure you want to permanently clear all ${currentCount} customer reviews?`)) return;
       clearBtn.disabled = true;
-      clearBtn.innerHTML = '⏳ <span>Clearing...</span>';
+      clearBtn.innerHTML = `${Icons.spinner({ size: 14 })} <span>Clearing...</span>`;
       try {
         const res = await api.clearAllReviews();
         showToast('success', 'Reviews Cleared', res.data?.message || 'All reviews have been removed.');
@@ -2347,7 +2908,7 @@ function bindReviewsToolbarEvents() {
         showToast('error', 'Clear Failed', err.message);
       } finally {
         clearBtn.disabled = false;
-        clearBtn.innerHTML = '🗑️ <span>Clear All Reviews</span>';
+        clearBtn.innerHTML = `${Icons.trash({ size: 16 })} <span>Clear All Reviews</span>`;
       }
     });
   }
@@ -2521,7 +3082,7 @@ function renderReviewsList() {
   if (filtered.length === 0) {
     container.innerHTML = `
       <div class="card p-12 text-center text-dark-300">
-        <div class="text-5xl mb-3">🥟⭐</div>
+        <div class="mb-3 text-amber-400 flex justify-center">${Icons.star({ size: 44, color: '#f59e0b' })}</div>
         <h3 class="text-lg font-bold text-white mb-1">No Reviews Found</h3>
         <p class="text-sm text-dark-400 max-w-md mx-auto">
           ${query || filter !== 'all' || starFilter !== 'all' 
@@ -2554,8 +3115,9 @@ function renderReviewsList() {
                 ${review.customer_phone ? `<span class="text-xs text-dark-400 font-mono">(${escapeHtml(review.customer_phone)})</span>` : ''}
                 ${review.order_id ? `<span class="badge badge-gray text-xs">Order #${review.order_id}</span>` : ''}
               </div>
-              <div class="text-xs text-dark-400 mt-0.5">
-                📅 ${escapeHtml(review.formatted_date || formatOrderDate(review.created_at))}
+              <div class="text-xs text-dark-400 mt-0.5 flex items-center gap-1.5">
+                ${Icons.calendar({ size: 12, className: 'text-dark-400' })}
+                <span>${escapeHtml(review.formatted_date || formatOrderDate(review.created_at))}</span>
               </div>
             </div>
           </div>
@@ -2563,12 +3125,14 @@ function renderReviewsList() {
           <!-- Status Badge & Controls -->
           <div class="flex items-center gap-2">
             ${review.is_disabled
-              ? `<span class="badge badge-red font-bold text-xs px-2.5 py-1 flex items-center gap-1">
-                   <span>⛔ Disabled</span>
+              ? `<span class="badge badge-red font-bold text-xs px-2.5 py-1 flex items-center gap-1.5">
+                   <span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                   <span>Disabled</span>
                    <span class="text-[10px] text-red-200">(Hidden from App)</span>
                  </span>`
-              : `<span class="badge badge-green font-bold text-xs px-2.5 py-1 flex items-center gap-1">
-                   <span>🟢 Active</span>
+              : `<span class="badge badge-green font-bold text-xs px-2.5 py-1 flex items-center gap-1.5">
+                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                   <span>Active</span>
                    <span class="text-[10px] text-emerald-200">(Visible to App)</span>
                  </span>`
             }
@@ -2597,11 +3161,11 @@ function renderReviewsList() {
           <div class="mt-3 p-4 rounded-xl bg-orange-950/20 border border-orange-700/30 text-sm space-y-1 relative">
             <div class="flex items-center justify-between text-xs text-brand-400 font-bold">
               <span class="flex items-center gap-1.5">
-                <span>🥟 Official Store Reply</span>
+                <span class="flex items-center gap-1">${Icons.siomai({ size: 14, strokeWidth: 2.2, color: 'var(--brand-400)' })} Official Store Reply</span>
                 <span class="text-dark-400 font-normal">• ${review.replied_at ? formatOrderDate(review.replied_at) : 'Recently'}</span>
               </span>
-              <button class="btn btn-ghost btn-edit-reply text-xs py-0.5 px-2 text-brand-300 hover:text-brand-200" data-id="${review.id}">
-                ✏️ Edit Reply
+              <button class="btn btn-ghost btn-edit-reply text-xs py-0.5 px-2 text-brand-300 hover:text-brand-200 flex items-center gap-1" data-id="${review.id}">
+                ${Icons.edit({ size: 12 })} <span>Edit Reply</span>
               </button>
             </div>
             <p class="text-dark-100 text-sm italic pl-2 border-l-2 border-brand-500 mt-1">
@@ -2614,7 +3178,7 @@ function renderReviewsList() {
         ${isEditing ? `
           <div class="mt-4 p-4 rounded-xl card-sm border border-brand-500/40 bg-dark-800 space-y-3">
             <div class="flex items-center justify-between text-xs font-bold text-brand-400">
-              <span>💬 ${hasReply ? 'Edit Official Store Reply' : 'Write Reply to Customer'}</span>
+              <span class="flex items-center gap-1.5">${Icons.message({ size: 14 })} <span>${hasReply ? 'Edit Official Store Reply' : 'Write Reply to Customer'}</span></span>
               <span class="text-dark-400 font-normal">Customer will see this response in the mobile app</span>
             </div>
             <textarea
@@ -2628,8 +3192,8 @@ function renderReviewsList() {
               <button class="btn btn-secondary btn-cancel-reply text-xs px-3 py-1.5" data-id="${review.id}">
                 Cancel
               </button>
-              <button class="btn btn-primary btn-submit-reply text-xs px-4 py-1.5" data-id="${review.id}">
-                💾 Save & Publish Reply
+              <button class="btn btn-primary btn-submit-reply text-xs px-4 py-1.5 flex items-center gap-1.5" data-id="${review.id}">
+                ${Icons.save({ size: 13 })} <span>Save & Publish Reply</span>
               </button>
             </div>
           </div>
@@ -2643,28 +3207,28 @@ function renderReviewsList() {
 
           <div class="flex items-center gap-2">
             ${!isEditing ? `
-              <button class="btn btn-secondary btn-toggle-reply text-xs py-1.5 px-3" data-id="${review.id}">
-                ${hasReply ? '💬 Reply Again' : '💬 Reply to Review'}
+              <button class="btn btn-secondary btn-toggle-reply text-xs py-1.5 px-3 flex items-center gap-1.5" data-id="${review.id}">
+                ${Icons.message({ size: 13 })} <span>${hasReply ? 'Reply Again' : 'Reply to Review'}</span>
               </button>
             ` : ''}
 
             <!-- Disable / Enable Toggle Button -->
             <button
-              class="btn ${review.is_disabled ? 'btn-success' : 'btn-danger'} btn-toggle-disable text-xs py-1.5 px-3"
+              class="btn ${review.is_disabled ? 'btn-success' : 'btn-danger'} btn-toggle-disable text-xs py-1.5 px-3 flex items-center gap-1.5"
               data-id="${review.id}"
               data-disabled="${review.is_disabled ? 'true' : 'false'}"
               title="${review.is_disabled ? 'Enable and make review visible to public' : 'Disable and hide review from public'}"
             >
-              ${review.is_disabled ? '✅ Enable Review' : '🚫 Disable Review'}
+              ${review.is_disabled ? `${Icons.checkCircle({ size: 13 })} <span>Enable Review</span>` : `${Icons.ban({ size: 13 })} <span>Disable Review</span>`}
             </button>
 
             <!-- Delete Review Button -->
             <button
-              class="btn btn-ghost text-red-400 hover:text-red-300 btn-delete-review text-xs py-1.5 px-2.5"
+              class="btn btn-ghost text-red-400 hover:text-red-300 btn-delete-review text-xs py-1.5 px-2.5 flex items-center gap-1"
               data-id="${review.id}"
               title="Delete this review permanently"
             >
-              🗑️ Delete
+              ${Icons.trash({ size: 13 })} <span>Delete</span>
             </button>
           </div>
         </div>
@@ -2684,7 +3248,7 @@ function bindReviewActionEvents() {
       const targetState = !isCurrentlyDisabled;
 
       e.currentTarget.disabled = true;
-      e.currentTarget.innerHTML = '⏳ Updating...';
+      e.currentTarget.innerHTML = `${Icons.spinner({ size: 13 })} <span>Updating...</span>`;
 
       try {
         await api.toggleReviewStatus(id, targetState);
@@ -2694,7 +3258,9 @@ function bindReviewActionEvents() {
       } catch (err) {
         showToast('error', 'Status Update Failed', err.message);
         e.currentTarget.disabled = false;
-        e.currentTarget.innerHTML = isCurrentlyDisabled ? '✅ Enable Review' : '🚫 Disable Review';
+        e.currentTarget.innerHTML = isCurrentlyDisabled 
+          ? `${Icons.checkCircle({ size: 13 })} <span>Enable Review</span>` 
+          : `${Icons.ban({ size: 13 })} <span>Disable Review</span>`;
       }
     });
   });
@@ -2743,7 +3309,7 @@ function bindReviewActionEvents() {
       const replyText = textarea ? textarea.value.trim() : '';
 
       e.currentTarget.disabled = true;
-      e.currentTarget.innerHTML = '⏳ Saving...';
+      e.currentTarget.innerHTML = `${Icons.spinner({ size: 13 })} <span>Saving...</span>`;
 
       try {
         await api.replyReview(id, replyText);
@@ -2753,7 +3319,7 @@ function bindReviewActionEvents() {
       } catch (err) {
         showToast('error', 'Reply Failed', err.message);
         e.currentTarget.disabled = false;
-        e.currentTarget.innerHTML = '💾 Save & Publish Reply';
+        e.currentTarget.innerHTML = `${Icons.save({ size: 13 })} <span>Save & Publish Reply</span>`;
       }
     });
   });

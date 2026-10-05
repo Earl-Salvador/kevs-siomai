@@ -4,31 +4,36 @@ import 'package:url_launcher/url_launcher.dart';
 class StoreLocationScreen extends StatelessWidget {
   const StoreLocationScreen({super.key});
 
-  static const double storeLat = 14.2690;
-  static const double storeLng = 121.4113;
+  static const double storeLat = 14.2604;
+  static const double storeLng = 121.3836;
   static const String storeName = 'Boss KEVS Siomai';
-  static const String storeAddress = 'Laguna Sports Complex, Brgy. Bubukal, Sta. Cruz, Laguna';
+  static const String storeAddress = '070 Batisan, Santa Cruz, Laguna';
   static const String storeHours = 'Open Daily: 9:00 AM - 8:00 PM';
   static const String storePhone = '0917-123-4567';
 
   Future<void> _openGoogleMaps(BuildContext context) async {
-    // Standard Google Maps directions URL
-    final url = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$storeLat,$storeLng&destination_place_id=Laguna+Sports+Complex');
+    // Google Maps directions URL directed to 070 Batisan, Santa Cruz, Laguna
+    final destination = Uri.encodeComponent(storeAddress);
+    final url = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$destination');
+    final coordUrl = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$storeLat,$storeLng');
+
     try {
       if (await canLaunchUrl(url)) {
         await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else if (await canLaunchUrl(coordUrl)) {
+        await launchUrl(coordUrl, mode: LaunchMode.externalApplication);
       } else {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open map app')),
-          );
-        }
+        await launchUrl(url, mode: LaunchMode.platformDefault);
       }
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error launching navigation: $e')),
-        );
+      try {
+        await launchUrl(url, mode: LaunchMode.platformDefault);
+      } catch (err) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error launching navigation: $err')),
+          );
+        }
       }
     }
   }
@@ -39,67 +44,77 @@ class StoreLocationScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Store Location & Map'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
           children: [
-            // ── Store Visual Card ──
-            Container(
-              height: 180,
-              width: double.infinity,
-              decoration: BoxDecoration(
+            // ── Store Visual Card (Tappable Map Card) ──
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
                 borderRadius: BorderRadius.circular(20),
-                gradient: LinearGradient(
-                  colors: [Colors.red.shade900, const Color(0xFFC62828), Colors.orange.shade800],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.red.shade900.withValues(alpha: 0.3),
-                    blurRadius: 10,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
-              ),
-              child: Stack(
-                children: [
-                  Positioned(
-                    right: -20,
-                    bottom: -20,
-                    child: Icon(Icons.location_on, size: 160, color: Colors.white.withValues(alpha: 0.12)),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.all(20.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Text(
-                            'OFFICIAL STORE LOCATION',
-                            style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          storeName,
-                          style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Sta. Cruz, Laguna Outlet',
-                          style: TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
-                      ],
+                onTap: () => _openGoogleMaps(context),
+                child: Container(
+                  height: 180,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: LinearGradient(
+                      colors: [Colors.red.shade900, const Color(0xFFC62828), Colors.orange.shade800],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.red.shade900.withValues(alpha: 0.3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
                   ),
-                ],
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        right: -20,
+                        bottom: -20,
+                        child: Icon(Icons.location_on, size: 160, color: Colors.white.withValues(alpha: 0.12)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(20.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text(
+                                'TAP TO NAVIGATE',
+                                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              storeName,
+                              style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              '070 Batisan, Santa Cruz, Laguna',
+                              style: TextStyle(color: Colors.white70, fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -188,8 +203,10 @@ class StoreLocationScreen extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
+    ),
+  ),
+);
+}
 
   Widget _buildInfoRow(IconData icon, String title, String subtitle, MaterialColor color) {
     return Row(

@@ -123,6 +123,35 @@ def get_descriptive_analytics(db, Sale, Order, OrderItem, Product):
     else:
         peak_hours = [{'hour': h, 'label': f"{h:02d}:00", 'orders': 0} for h in range(24)]
 
+    # --- Sync any completed orders missing from sales table ---
+    sale_order_ids = {s.order_id for s in sales if s.order_id is not None}
+    completed_orders = [o for o in orders if o.status in ('completed', 'delivered') or o.payment_status == 'confirmed']
+    synced_any = False
+    for o in completed_orders:
+        if o.id not in sale_order_ids:
+            new_s = Sale(
+                order_id=o.id,
+                total_amount=float(o.total_amount or 0.0),
+                payment_method=o.payment_method or 'Cash',
+                timestamp=o.created_at or now
+            )
+            db.session.add(new_s)
+            sales.append(new_s)
+            sale_order_ids.add(o.id)
+            synced_any = True
+    if synced_any:
+        try:
+            db.session.commit()
+            if sales:
+                sales_df = pd.DataFrame([
+                    {'date': s.timestamp.date() if hasattr(s.timestamp, 'date') else now.date(),
+                     'amount': float(s.total_amount or 0.0),
+                     'method': s.payment_method}
+                    for s in sales
+                ])
+        except Exception:
+            db.session.rollback()
+
     # --- Summary Stats ---
     total_sales_revenue = float(sales_df['amount'].sum()) if not sales_df.empty else 0.0
     today_sales = float(sales_df[sales_df['date'] == today]['amount'].sum()) if not sales_df.empty else 0.0
@@ -130,12 +159,16 @@ def get_descriptive_analytics(db, Sale, Order, OrderItem, Product):
     gcash_revenue = float(sales_df[sales_df['method'] == 'GCash']['amount'].sum()) if not sales_df.empty else 0.0
     cash_revenue = float(sales_df[sales_df['method'] == 'Cash']['amount'].sum()) if not sales_df.empty else 0.0
 
+    has_data = total_sales_revenue > 0 or len(sales) > 0 or len(orders) > 0
+
     return {
+        "has_sales_data": has_data,
         "total_sales": total_sales_revenue,
         "total_revenue": total_sales_revenue,
         "total_orders": total_orders,
-        "average_order_value": round(total_sales_revenue / total_orders, 2) if total_orders > 0 else 0.0,
-        "top_selling_product": top_products[0] if top_products else {"name": "Hotspot Siomai", "quantity": 0, "revenue": 0.0},
+        "total_completed": total_completed,
+        "average_order_value": round(total_sales_revenue / total_completed, 2) if total_completed > 0 else (round(total_sales_revenue / total_orders, 2) if total_orders > 0 else 0.0),
+        "top_selling_product": top_products[0] if top_products else {"name": "No sales recorded yet", "quantity": 0, "revenue": 0.0},
         "summary": {
             "total_revenue": total_sales_revenue,
             "today_sales": today_sales,

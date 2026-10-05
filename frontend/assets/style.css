@@ -230,11 +230,16 @@ select.input { appearance: none; cursor: pointer; }
 .grid-3  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .grid-4  { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 @media (max-width: 1024px) {
-  .grid-4 { grid-template-columns: repeat(2, 1fr); }
-  .grid-3 { grid-template-columns: repeat(2, 1fr); }
+  .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .grid-3 { grid-template-columns: repeat(2, 1fr); gap: 14px; }
 }
 @media (max-width: 640px) {
-  .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; }
+  .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .grid-3 { grid-template-columns: 1fr; gap: 12px; }
+  .grid-2 { grid-template-columns: 1fr; gap: 10px; }
+}
+@media (max-width: 380px) {
+  .grid-4 { grid-template-columns: 1fr; }
 }
 
 /* ─── Flex Utilities ─────────────────────────────────────────────────── */
@@ -876,4 +881,138 @@ body.light-theme .review-card {
   border-color: #e2e8f0;
 }
 
+/* ─── Responsive Layout Overhauls & Mobile Optimization ──────────────── */
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+}
 
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tablet & Mobile Breakpoints */
+@media (max-width: 1024px) {
+  .nav-queue-pill {
+    display: none !important;
+  }
+  .orders-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  #navbar .nav-inner {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 58px;
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  #navbar nav {
+    order: 3;
+    width: 100%;
+    margin-left: 0 !important;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    display: flex;
+    gap: 8px;
+  }
+  #navbar nav::-webkit-scrollbar {
+    display: none;
+  }
+  .nav-tab {
+    flex-shrink: 0;
+    padding: 7px 12px;
+    font-size: 13px;
+  }
+  #main-content {
+    padding: 16px 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Stat Cards */
+  .stat-card {
+    padding: 12px;
+    gap: 10px;
+  }
+  .stat-icon {
+    width: 38px;
+    height: 38px;
+    font-size: 20px;
+    border-radius: 12px;
+  }
+  .stat-card .text-3xl {
+    font-size: 20px !important;
+  }
+
+  /* Orders Grid */
+  .orders-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* Modals */
+  .modal-backdrop {
+    padding: 8px;
+  }
+  .modal-box {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 4px !important;
+    padding: 14px !important;
+    max-height: 94vh !important;
+  }
+
+  /* Filter bars */
+  .tab-bar {
+    width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-btn {
+    flex-shrink: 0;
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+
+  /* Header action buttons */
+  .flex.items-center.gap-3 {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  /* Card padding on mobile */
+  .card.p-6 {
+    padding: 14px;
+  }
+  .card.p-8 {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  .nav-brand-title {
+    font-size: 14px !important;
+  }
+  .user-name-display, #btn-logout {
+    font-size: 11px !important;
+  }
+  .pagination-wrapper {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+}

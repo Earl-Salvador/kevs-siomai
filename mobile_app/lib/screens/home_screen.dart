@@ -24,20 +24,48 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  IconData _getCategoryIcon(String category) {
+    final cat = category.toLowerCase();
+    if (cat == 'all') return Icons.restaurant_menu_rounded;
+    if (cat.contains('siomai')) return Icons.lunch_dining_rounded;
+    if (cat.contains('drink') || cat.contains('beverage')) return Icons.local_cafe_rounded;
+    if (cat.contains('add') || cat.contains('sauce')) return Icons.local_fire_department_rounded;
+    return Icons.category_rounded;
+  }
+
   String _getCategoryLabel(String category) {
     final cat = category.toLowerCase();
-    if (cat == 'all') return '🥢 All Items';
-    if (cat.contains('siomai')) return '🥟 Siomai';
-    if (cat.contains('drink') || cat.contains('beverage')) return '🥤 Cold Drinks';
-    if (cat.contains('add') || cat.contains('sauce')) return '🌶️ Add-ons';
+    if (cat == 'all') return 'All Items';
+    if (cat.contains('siomai')) return 'Siomai';
+    if (cat.contains('drink') || cat.contains('beverage')) return 'Cold Drinks';
+    if (cat.contains('add') || cat.contains('sauce')) return 'Add-ons';
     return category;
   }
 
   @override
   Widget build(BuildContext context) {
     final shop = context.watch<ShopProvider>();
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isWide = screenWidth > 600;
+    final size = MediaQuery.sizeOf(context);
+    final screenWidth = size.width;
+
+    // Responsive columns and aspect ratios across all device form factors
+    final int crossAxisCount = screenWidth >= 1200
+        ? 5
+        : screenWidth >= 900
+            ? 4
+            : screenWidth >= 600
+                ? 3
+                : 2;
+
+    final double childAspectRatio = screenWidth >= 1200
+        ? 0.82
+        : screenWidth >= 900
+            ? 0.78
+            : screenWidth >= 600
+                ? 0.74
+                : (screenWidth <= 360 ? 0.65 : 0.68);
+
+    final double horizontalPadding = screenWidth > 900 ? (screenWidth - 900) / 2 + 16 : 16.0;
 
     // Filter products by category AND search query (only active items)
     final filteredProducts = shop.products.where((p) {
@@ -408,15 +436,28 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                               ],
                       ),
-                      child: Text(
-                        _getCategoryLabel(cat),
-                        style: TextStyle(
-                          color:
-                              isSelected ? Colors.white : const Color(0xFF334155),
-                          fontWeight:
-                              isSelected ? FontWeight.w800 : FontWeight.w600,
-                          fontSize: 12.5,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _getCategoryIcon(cat),
+                            size: 15,
+                            color: isSelected ? Colors.white : const Color(0xFFC62828),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _getCategoryLabel(cat),
+                            style: TextStyle(
+                              color: isSelected
+                                  ? Colors.white
+                                  : const Color(0xFF334155),
+                              fontWeight: isSelected
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   );
@@ -488,11 +529,11 @@ class _HomeScreenState extends State<HomeScreen> {
           else
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
-                  16, 0, 16, shop.cartCount > 0 ? 94 : 20),
+                  horizontalPadding, 0, horizontalPadding, shop.cartCount > 0 ? 94 : 20),
               sliver: SliverGrid(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: isWide ? 3 : 2,
-                  childAspectRatio: isWide ? 0.78 : 0.67,
+                  crossAxisCount: crossAxisCount,
+                  childAspectRatio: childAspectRatio,
                   crossAxisSpacing: 12,
                   mainAxisSpacing: 14,
                 ),

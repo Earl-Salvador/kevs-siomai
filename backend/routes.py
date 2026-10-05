@@ -32,10 +32,10 @@ def _get_queue_data():
     today_start_ph = now_ph.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start_utc = (today_start_ph - ph_offset).replace(tzinfo=None)
 
-    # Active orders (pending, accepted, preparing, ready_pickup, ready_delivery, out_for_delivery)
+    # Active orders (pending, accepted, preparing, ready_pickup, ready_delivery, out_for_delivery) - newest first so incoming orders display immediately
     active_orders = Order.query.filter(
         Order.status.notin_(['completed', 'delivered', 'cancelled'])
-    ).order_by(Order.created_at.asc()).all()
+    ).order_by(Order.created_at.desc(), Order.id.desc()).all()
 
     # Completed and delivered orders from today
     completed_today = Order.query.filter(
@@ -108,11 +108,18 @@ def _get_queue_data():
         'timestamp': now.isoformat()
     }
 
-def _emit_queue_update(socketio):
-    """Broadcast updated queue state to all connected admin clients in real time."""
+def _emit_queue_update(socketio, new_order=None):
+    """Broadcast updated queue state and sales updates to all connected admin clients in real time."""
     try:
         payload = _get_queue_data()
         socketio.emit('queue_updated', payload)
+        if new_order:
+            order_dict = new_order.to_dict() if hasattr(new_order, 'to_dict') else new_order
+            socketio.emit('new_order', order_dict)
+        socketio.emit('sales_updated', {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'stats': payload.get('stats', {})
+        })
     except Exception as e:
         print(f"[SocketIO emit error] {e}")
 
@@ -149,17 +156,23 @@ def _decrease_inventory(order):
     return alerts
 
 def _record_sale(order):
-    """Record a sale entry when order is completed."""
+    """Record or update a sale entry when order is completed or confirmed."""
     existing = Sale.query.filter_by(order_id=order.id).first()
     if not existing:
         sale = Sale(
             order_id=order.id,
-            total_amount=order.total_amount,
-            payment_method=order.payment_method,
+            total_amount=float(order.total_amount or 0.0),
+            payment_method=order.payment_method or 'Cash',
             timestamp=datetime.now(timezone.utc)
         )
         db.session.add(sale)
+    else:
+        existing.total_amount = float(order.total_amount or 0.0)
+        existing.payment_method = order.payment_method or 'Cash'
+    try:
         db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 # ─────────────────────────────────────────────
@@ -261,7 +274,8 @@ def queue_add():
         db.session.add(item)
 
     db.session.commit()
-    _emit_queue_update(socketio)
+    print(f"📦 [NEW WALK-IN ORDER] Ticket #{new_order.queue_no} | {new_order.customer_name} | ₱{new_order.total_amount:.2f} ({new_order.payment_method})", flush=True)
+    _emit_queue_update(socketio, new_order)
 
     return jsonify({
         'message': 'Order added to queue',
@@ -288,6 +302,7 @@ def queue_remove():
         queue.now_serving += 1
     _record_sale(order)
     db.session.commit()
+    print(f"✅ [ORDER COMPLETED] Order #{order.id} | Ticket #{order.queue_no} served & recorded in sales!", flush=True)
     _emit_queue_update(socketio)
     return jsonify({'message': 'Order completed and queue updated', 'order': order.to_dict()}), 200
 
@@ -320,6 +335,7 @@ def queue_call_next():
 
     queue.last_updated = datetime.now(timezone.utc)
     db.session.commit()
+    print(f"📢 [CALL NEXT] Now Serving Ticket #{queue.now_serving}", flush=True)
     _emit_queue_update(socketio)
 
     return jsonify({
@@ -384,7 +400,19 @@ def clear_all_orders():
 def get_products():
     include_inactive = request.args.get('all', 'false').lower() == 'true'
     query = Product.query if include_inactive else Product.query.filter_by(is_active=True)
-    products = query.order_by(Product.category, Product.name).all()
+    products = query.all()
+
+    def _cat_priority(p):
+        c = (p.category or '').lower()
+        if 'siomai' in c:
+            return 1
+        if 'drink' in c or 'beverage' in c:
+            return 2
+        if 'add' in c or 'sauce' in c or 'condiment' in c:
+            return 3
+        return 4
+
+    products.sort(key=lambda p: (_cat_priority(p), p.id))
     return jsonify({'products': [p.to_dict() for p in products]}), 200
 
 @api.route('/products', methods=['POST'])
@@ -508,7 +536,8 @@ def create_order():
         item.order_id = new_order.id
         db.session.add(item)
     db.session.commit()
-    _emit_queue_update(socketio)
+    print(f"📦 [NEW MOBILE ORDER] Ticket #{new_order.queue_no} | {new_order.customer_name} ({new_order.order_type}) | ₱{new_order.total_amount:.2f} ({new_order.payment_method})", flush=True)
+    _emit_queue_update(socketio, new_order)
     return jsonify({'message': 'Order placed', 'order': new_order.to_dict(), 'queue': queue.to_dict()}), 201
 
 @api.route('/orders/<int:order_id>', methods=['GET'])
@@ -564,7 +593,11 @@ def update_order(order_id):
         if field in data:
             setattr(order, field, data[field])
 
+    if order.status in ('completed', 'delivered') or order.payment_status == 'confirmed':
+        _record_sale(order)
+
     db.session.commit()
+    print(f"🔄 [ORDER UPDATE] Order #{order.id} (Ticket #{order.queue_no}) -> Status: {order.status} | Payment: {order.payment_status}", flush=True)
     _emit_queue_update(socketio)
 
     return jsonify({
@@ -633,6 +666,7 @@ def confirm_payment(order_id):
     if 'payment_method' in data:
         order.payment_method = data['payment_method']
     db.session.commit()
+    print(f"💰 [PAYMENT CONFIRMED] Order #{order.id} (Ticket #{order.queue_no}) payment confirmed via {order.payment_method}!", flush=True)
     _emit_queue_update(socketio)
     return jsonify({'message': 'Payment confirmed', 'order': order.to_dict()}), 200
 
@@ -767,19 +801,37 @@ def dashboard_stats():
     ).scalar()
     today_revenue = float(today_sales_q or 0.0)
 
+    total_sales_q = db.session.query(db.func.sum(Sale.total_amount)).scalar()
+    total_sales = float(total_sales_q or 0.0)
+
+    # In case Sale has not been synced from completed orders yet
+    if total_sales == 0.0:
+        completed_orders_total = db.session.query(db.func.sum(Order.total_amount)).filter(
+            Order.status.in_(['completed', 'delivered'])
+        ).scalar()
+        total_sales = float(completed_orders_total or 0.0)
+        today_completed_orders_total = db.session.query(db.func.sum(Order.total_amount)).filter(
+            Order.status.in_(['completed', 'delivered']),
+            Order.updated_at >= today_start
+        ).scalar()
+        today_revenue = float(today_completed_orders_total or 0.0)
+
     low_stock_products = Product.query.filter(
         Product.is_active == True,
         Product.stock <= (Product.max_stock * 0.20)
     ).count()
+
+    all_completed = Order.query.filter(Order.status.in_(['completed', 'delivered'])).count()
 
     return jsonify({
         'queue': queue.to_dict(),
         'active_orders': active_orders,
         'pending_orders': pending_orders,
         'today_completed': today_completed,
-        'completed_orders': today_completed,
+        'completed_orders': all_completed,
         'today_revenue': today_revenue,
-        'total_sales': today_revenue,
+        'total_sales': total_sales,
+        'total_revenue': total_sales,
         'low_stock_alerts': low_stock_products
     }), 200
 
@@ -872,6 +924,7 @@ def create_review():
 
     db.session.add(review)
     db.session.commit()
+    print(f"⭐ [CUSTOMER REVIEW] {customer_name} rated {rating} star(s): \"{comment}\"", flush=True)
 
     review_dict = review.to_dict()
     _emit_review_event('review_created', review_dict)

@@ -50,9 +50,12 @@ export async function getUnsynced() {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_ORDERS, 'readonly');
     const store = tx.objectStore(STORE_ORDERS);
-    const index = store.index('synced');
-    const req = index.getAll(false);
-    req.onsuccess = () => resolve(req.result);
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const all = req.result || [];
+      const unsynced = all.filter(r => !r.synced || r.synced === 0 || r.synced === 'false');
+      resolve(unsynced);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -92,8 +95,13 @@ export async function markAsSynced(localIds) {
 }
 
 export async function getUnsyncedCount() {
-  const unsynced = await getUnsynced();
-  return unsynced.length;
+  try {
+    const unsynced = await getUnsynced();
+    return unsynced.length;
+  } catch (e) {
+    console.warn('Error getting unsynced count:', e);
+    return 0;
+  }
 }
 
 export async function clearSynced() {
@@ -101,12 +109,13 @@ export async function clearSynced() {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_ORDERS, 'readwrite');
     const store = tx.objectStore(STORE_ORDERS);
-    const index = store.index('synced');
-    const req = index.openCursor(IDBKeyRange.only(true));
+    const req = store.openCursor();
     req.onsuccess = (e) => {
       const cursor = e.target.result;
       if (cursor) {
-        cursor.delete();
+        if (cursor.value && (cursor.value.synced === true || cursor.value.synced === 1 || cursor.value.synced === 'true')) {
+          cursor.delete();
+        }
         cursor.continue();
       } else {
         resolve();

@@ -55,9 +55,12 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: () => shop.loadReviews(),
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
                   // Overall Rating Summary Card
                   Card(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -109,7 +112,13 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                                       padding: const EdgeInsets.symmetric(vertical: 2.0),
                                       child: Row(
                                         children: [
-                                          Text('$star★', style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text('$star', style: TextStyle(fontSize: 11, color: Colors.grey.shade700, fontWeight: FontWeight.bold)),
+                                              const Icon(Icons.star_rounded, size: 12, color: Colors.amber),
+                                            ],
+                                          ),
                                           const SizedBox(width: 6),
                                           Expanded(
                                             child: ClipRRect(
@@ -182,7 +191,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                         child: Center(
                           child: Column(
                             children: [
-                              Text('🥟⭐', style: TextStyle(fontSize: 40)),
+                              Icon(Icons.rate_review_outlined, size: 48, color: Colors.amber),
                               SizedBox(height: 10),
                               Text(
                                 'Be the first to leave a review!',
@@ -284,7 +293,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                                     children: [
                                       Row(
                                         children: [
-                                          const Text('🥟', style: TextStyle(fontSize: 14)),
+                                          const Icon(Icons.storefront_rounded, size: 15, color: Color(0xFFC62828)),
                                           const SizedBox(width: 6),
                                           const Text(
                                             'BOSS KEVS Response',
@@ -319,6 +328,8 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 ],
               ),
             ),
+          ),
+        ),
     );
   }
 }
