@@ -7,12 +7,12 @@ class StoreLocationScreen extends StatelessWidget {
   static const double storeLat = 14.2604;
   static const double storeLng = 121.3836;
   static const String storeName = 'Boss KEVS Siomai';
-  static const String storeAddress = '070 Batisan, Brgy. Gatid, Santa Cruz, Laguna';
+  static const String storeAddress = '070 Batisan, Gatid, Santa Cruz, Laguna';
   static const String storeHours = 'Open Daily: 9:00 AM - 8:00 PM';
   static const String storePhone = '0917-123-4567';
 
   Future<void> _openGoogleMaps(BuildContext context) async {
-    // Google Maps directions URL directed to 070 Batisan, Santa Cruz, Laguna
+    // Google Maps directions URL directed to 070 Batisan, Gatid, Santa Cruz, Laguna
     final destination = Uri.encodeComponent(storeAddress);
     final url = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$destination');
     final coordUrl = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$storeLat,$storeLng');
@@ -106,7 +106,7 @@ class StoreLocationScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             const Text(
-                              '070 Batisan, Brgy. Gatid, Santa Cruz, Laguna',
+                              '070 Batisan, Gatid, Santa Cruz, Laguna',
                               style: TextStyle(color: Colors.white70, fontSize: 14),
                             ),
                           ],

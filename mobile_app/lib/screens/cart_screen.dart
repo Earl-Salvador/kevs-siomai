@@ -72,7 +72,7 @@ class _CartScreenState extends State<CartScreen> {
             ),
             SizedBox(height: 8),
             Text(
-              'Kapag wala sa Gatid ang iyong address, hindi po makakapag-deliver ang aming rider. Mangyaring lumipat sa "Store Pickup" upang maihanda ang iyong order sa tindahan (070 Batisan, Santa Cruz, Laguna).',
+              'Kapag wala sa Gatid ang iyong address, hindi po makakapag-deliver ang aming rider. Mangyaring lumipat sa "Store Pickup" upang maihanda ang iyong order sa tindahan (070 Batisan, Gatid, Santa Cruz, Laguna).',
               style: TextStyle(fontSize: 12.5, color: Colors.black87, height: 1.3),
             ),
           ],

@@ -203,7 +203,7 @@ def get_delivery_coverage():
     return jsonify({
         'status': 'active',
         'coverage_area': 'Barangay Gatid, Santa Cruz, Laguna',
-        'hub_address': '070 Batisan, Brgy. Gatid, Santa Cruz, Laguna',
+        'hub_address': '070 Batisan, Gatid, Santa Cruz, Laguna',
         'allowed_barangay': 'Gatid',
         'municipality': 'Santa Cruz',
         'province': 'Laguna',
