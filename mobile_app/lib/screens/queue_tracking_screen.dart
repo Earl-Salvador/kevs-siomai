@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../providers/shop_provider.dart';
 import '../models/order.dart';
 import '../widgets/order_status_badge.dart';
-import '../widgets/review_dialog.dart';
 import '../widgets/gcash_qr_dialog.dart';
 
 class QueueTrackingScreen extends StatelessWidget {
@@ -425,27 +424,6 @@ class QueueTrackingScreen extends StatelessWidget {
                 ),
               ],
             ),
-            if (order.isCompleted)
-              Padding(
-                padding: const EdgeInsets.only(top: 10.0),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.amber.shade700,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    icon: const Icon(Icons.star_rounded, size: 17),
-                    label: const Text('Rate this Order (1 - 5 Stars)'),
-                    onPressed: () => ReviewDialog.show(
-                      context,
-                      orderId: order.id,
-                      initialCustomerName: order.customerName,
-                    ),
-                  ),
-                ),
-              ),
           ],
         ),
       ),

@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 import '../models/product.dart';
 import '../models/order.dart';
 import '../models/queue_status.dart';
-import '../models/review.dart';
 import '../services/api_service.dart';
 import '../services/offline_service.dart';
 
@@ -65,16 +64,6 @@ class ShopProvider extends ChangeNotifier {
   List<CustomerOrder> get activeOrders => _activeOrders;
   List<CustomerOrder> get pendingOfflineOrders => _pendingOfflineOrders;
 
-  List<CustomerReview> _reviews = [];
-  Map<String, dynamic> _reviewStats = {};
-  bool _isLoadingReviews = false;
-
-  List<CustomerReview> get reviews => _reviews;
-  Map<String, dynamic> get reviewStats => _reviewStats;
-  bool get isLoadingReviews => _isLoadingReviews;
-  double get averageRating => (_reviewStats['average_rating'] as num?)?.toDouble() ?? 0.0;
-  int get totalReviews => (_reviewStats['total_reviews'] as num?)?.toInt() ?? _reviews.length;
-
   ShopProvider() {
     init();
   }
@@ -83,7 +72,6 @@ class ShopProvider extends ChangeNotifier {
     await loadProducts();
     await loadLocalOrders();
     await refreshQueue();
-    await loadReviews();
 
     // Start background queue polling every 2 seconds for real-time synchronization
     _queuePollTimer?.cancel();
@@ -302,40 +290,5 @@ class ShopProvider extends ChangeNotifier {
       return true;
     }
     return false;
-  }
-
-  // ── Customer Reviews ──
-  Future<void> loadReviews({bool showLoader = false}) async {
-    if (showLoader) {
-      _isLoadingReviews = true;
-      notifyListeners();
-    }
-    final res = await ApiService.fetchReviews();
-    _isLoadingReviews = false;
-    if (res.isSuccess && res.data != null) {
-      _reviews = (res.data!['reviews'] as List<CustomerReview>?) ?? [];
-      _reviewStats = (res.data!['stats'] as Map<String, dynamic>?) ?? {};
-    }
-    notifyListeners();
-  }
-
-  Future<ApiResult<CustomerReview>> submitReview({
-    required int rating,
-    String comment = '',
-    String customerName = '',
-    String customerPhone = '',
-    int? orderId,
-  }) async {
-    final res = await ApiService.submitReview(
-      rating: rating,
-      comment: comment,
-      customerName: customerName,
-      customerPhone: customerPhone,
-      orderId: orderId,
-    );
-    if (res.isSuccess) {
-      await loadReviews();
-    }
-    return res;
   }
 }

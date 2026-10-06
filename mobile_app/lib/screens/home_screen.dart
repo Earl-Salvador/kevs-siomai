@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../providers/shop_provider.dart';
 import '../widgets/product_card.dart';
 import 'cart_screen.dart';
-import 'reviews_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onGoToQueue;
@@ -213,14 +212,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.star_rounded, color: Colors.amber),
-                tooltip: 'Reviews & Ratings',
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ReviewsScreen()),
-                ),
-              ),
               IconButton(
                 icon: const Icon(Icons.refresh_rounded, color: Colors.white),
                 tooltip: 'Refresh Menu',

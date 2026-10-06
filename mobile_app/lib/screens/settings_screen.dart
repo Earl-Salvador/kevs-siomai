@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/shop_provider.dart';
 import '../services/offline_service.dart';
-import '../widgets/review_dialog.dart';
-import 'reviews_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -201,91 +199,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           : null,
                       child: const Text('Sync Now'),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // ── Customer Reviews & Ratings ──
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.star_rounded, color: Colors.amber.shade700, size: 24),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Ratings & Customer Reviews',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const Spacer(),
-                      if (shop.averageRating > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.amber.shade300),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.star, size: 14, color: Colors.amber.shade700),
-                              const SizedBox(width: 4),
-                              Text(
-                                shop.averageRating.toStringAsFixed(1),
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.amber.shade900),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Rate your experience with 1-5 stars and share your feedback on the siomai and service.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.amber.shade700,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          icon: const Icon(Icons.rate_review, size: 18),
-                          label: const Text('Write Review', style: TextStyle(fontWeight: FontWeight.bold)),
-                          onPressed: () => ReviewDialog.show(context),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFC62828),
-                            side: const BorderSide(color: Color(0xFFC62828)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          icon: const Icon(Icons.list_alt, size: 18),
-                          label: const Text('View Reviews', style: TextStyle(fontWeight: FontWeight.bold)),
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(builder: (_) => const ReviewsScreen()),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),

@@ -3,7 +3,6 @@ import 'package:http/http.dart' as http;
 import '../models/product.dart';
 import '../models/order.dart';
 import '../models/queue_status.dart';
-import '../models/review.dart';
 import 'offline_service.dart';
 
 class ApiResult<T> {
@@ -239,67 +238,6 @@ class ApiService {
       return ApiResult.failure('Payment verification failed');
     } catch (e) {
       return ApiResult.failure('Payment verification error: $e');
-    }
-  }
-
-  // ── Fetch Customer Reviews ──
-  static Future<ApiResult<Map<String, dynamic>>> fetchReviews() async {
-    final baseUrl = await OfflineService.getBaseUrl();
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/reviews?include_disabled=false'),
-      ).timeout(_timeout);
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-        final List<dynamic> list = data['reviews'] ?? [];
-        final reviews = list.map((json) => CustomerReview.fromJson(json)).toList();
-        return ApiResult.success({
-          'reviews': reviews,
-          'stats': data['stats'] ?? {},
-        });
-      }
-      return ApiResult.failure('Failed to load reviews');
-    } catch (e) {
-      return ApiResult.failure('Reviews connection error: $e');
-    }
-  }
-
-  // ── Submit Customer Review ──
-  static Future<ApiResult<CustomerReview>> submitReview({
-    required int rating,
-    String comment = '',
-    String customerName = '',
-    String customerPhone = '',
-    int? orderId,
-  }) async {
-    final baseUrl = await OfflineService.getBaseUrl();
-    try {
-      final payload = {
-        'rating': rating,
-        'comment': comment,
-        'customer_name': customerName.isNotEmpty ? customerName : 'Anonymous Customer',
-        'customer_phone': customerPhone,
-        'order_id': ?orderId,
-      };
-
-      final response = await http.post(
-        Uri.parse('$baseUrl/reviews'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(payload),
-      ).timeout(_timeout);
-
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-        final reviewJson = data['review'] ?? {};
-        final review = CustomerReview.fromJson(reviewJson);
-        return ApiResult.success(review);
-      } else {
-        final Map<String, dynamic> err = jsonDecode(response.body);
-        return ApiResult.failure(err['error'] ?? 'Failed to submit review');
-      }
-    } catch (e) {
-      return ApiResult.failure('Network error submitting review: $e');
     }
   }
 }
